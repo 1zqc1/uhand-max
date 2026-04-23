@@ -1,22 +1,26 @@
 #ifndef _HW_ACTION_CTL_
 #define _HW_ACTION_CTL_
-#include "actions.h"
-#include "bluetooth.h"
 
-class HW_ACTION_CTL{
-  public:
-    uint8_t extended_func_angles[6] = { 180,180,180,180,180, 90 };  // 初始化：张开
-    void action_set(int num);
-    int action_state_get(void);
-    void action_task(void);
+#include <stdint.h>
 
-    // 蓝牙控制任务
-    void blue_task(void);
-    void blue_ctl_receive(void);
-    bool blue_get_servos(struct uHand_Servo* uhand_servos);
+// 手指角度目标结构
+typedef struct {
+  uint8_t thumb;
+  uint8_t index;
+  uint8_t middle;
+  uint8_t ring;
+  uint8_t pinky;
+} FingerAngles;
 
-  private:
-    int action_num = 0;
-};
+// 平滑控制参数结构
+typedef struct {
+  FingerAngles current;
+  FingerAngles target;
+  uint16_t step_interval;
+  uint32_t last_update;
+} SmoothControl;
+
+// 声明 gripper 变量（在 uhand_IMU.ino 中定义）
+extern SmoothControl gripper;
 
 #endif
