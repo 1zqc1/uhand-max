@@ -1,153 +1,138 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-超声波测距 - HC-SR04
+超声波测距 - CS100A (I2C 接口)
 功能：读取超声波传感器距离数据
 适用：飞腾派 / 树莓派 / 通用 Linux
 """
 
 import time
-import os
 
 # ============== 硬件配置 ==============
-# HC-SR04 超声波模块引脚 (BCM 编码)
-TRIG_PIN = 23   # 发送引脚
-ECHO_PIN = 24   # 接收引脚
+# I2C 配置
+I2C_BUS = 1           # I2C 总线号 (一般 1)
+I2C_ADDR = 0x77       # CS100A I2C 地址
 
-# GPIO 操作路径
-GPIO_PATH = "/sys/class/gpio"
+# 寄存器地址
+REG_DISTANCE = 0x00    # 距离寄存器
 
 
-def gpio_export(pin):
-    """导出 GPIO 引脚"""
-    export_path = os.path.join(GPIO_PATH, "export")
+def i2c_read_word(bus, addr, reg):
+    """I2C 读取字（16位）"""
     try:
-        with open(export_path, 'w') as f:
-            f.write(str(pin))
+        # 写入寄存器地址
+        bus.write_byte(addr, reg)
+        time.sleep(0.01)
+
+        # 读取两个字节
+        low = bus.read_byte(addr)
+        high = bus.read_byte(addr)
+
+        # 合成 16 位数据
+        value = (high << 8) | low
+        return value
+    except Exception as e:
+        print(f"[错误] I2C 读取失败: {e}")
+        return -1
+
+
+def setup_i2c():
+    """检查并初始化 I2C"""
+    try:
+        import smbus
+        bus = smbus.SMBus(I2C_BUS)
+        print(f"[成功] I2C 总线 {I2C_BUS} 已打开")
+
+        # 检测设备
+        try:
+            bus.read_byte(I2C_ADDR)
+            print(f"[成功] 找到设备 0x{I2C_ADDR:02X}")
+        except:
+            print(f"[警告] 未找到设备 0x{I2C_ADDR:02X}")
+
+        return bus
+    except Exception as e:
+        print(f"[错误] I2C 初始化失败: {e}")
+        return None
+
+
+def measure_distance(bus):
+    """测量距离（毫米）"""
+    if bus is None:
+        return -1
+
+    try:
+        # CS100A 读取距离
+        # 发送触发命令
+        bus.write_byte(I2C_ADDR, 0x01)
         time.sleep(0.1)
-    except:
-        pass
 
+        # 读取距离数据
+        low = bus.read_byte(I2C_ADDR)
+        high = bus.read_byte(I2C_ADDR)
 
-def gpio_direction(pin, direction):
-    """设置 GPIO 方向"""
-    pin_path = os.path.join(GPIO_PATH, f"gpio{pin}", "direction")
-    try:
-        with open(pin_path, 'w') as f:
-            f.write(direction)
-    except:
-        pass
+        # 有些模块返回的是 cm，需要确认你的模块手册
+        distance_mm = (high << 8) | low
 
-
-def gpio_write(pin, value):
-    """写入 GPIO 值"""
-    pin_path = os.path.join(GPIO_PATH, f"gpio{pin}", "value")
-    try:
-        with open(pin_path, 'w') as f:
-            f.write('1' if value else '0')
-    except:
-        pass
-
-
-def gpio_read(pin):
-    """读取 GPIO 值"""
-    pin_path = os.path.join(GPIO_PATH, f"gpio{pin}", "value")
-    try:
-        with open(pin_path, 'r') as f:
-            return int(f.read().strip())
-    except:
-        return 0
-
-
-def setup():
-    """初始化 GPIO"""
-    # 导出引脚
-    gpio_export(TRIG_PIN)
-    gpio_export(ECHO_PIN)
-
-    # 设置方向
-    gpio_direction(TRIG_PIN, 'out')
-    gpio_direction(ECHO_PIN, 'in')
-
-    # 初始低电平
-    gpio_write(TRIG_PIN, False)
-
-    print("[信息] 等待传感器稳定...")
-    time.sleep(2)
-
-
-def measure_distance():
-    """测量距离（厘米）"""
-    # 发送触发信号 (至少 10us)
-    gpio_write(TRIG_PIN, True)
-    time.sleep(0.00001)  # 10微秒
-    gpio_write(TRIG_PIN, False)
-
-    # 等待回响开始 (ECHO 变为 HIGH)
-    timeout_start = time.time()
-    while gpio_read(ECHO_PIN) == 0:
-        if time.time() - timeout_start > 0.1:
+        if distance_mm == 0 or distance_mm > 4000:
             return -1
-    pulse_start = time.time()
 
-    # 等待回响结束 (ECHO 变为 LOW)
-    timeout_start = time.time()
-    while gpio_read(ECHO_PIN) == 1:
-        if time.time() - timeout_start > 0.1:
+        return distance_mm
+
+    except Exception as e:
+        # 如果上面的方式不行，试试这个
+        try:
+            bus.write_byte_data(I2C_ADDR, 0x00, 0x01)
+            time.sleep(0.1)
+            data = bus.read_i2c_block_data(I2C_ADDR, 0x00, 2)
+            distance_mm = (data[1] << 8) | data[0]
+            return distance_mm
+        except:
             return -1
-    pulse_end = time.time()
-
-    # 计算距离
-    # 声速 343m/s = 34300cm/s
-    # 距离 = 时间差 × 声速 / 2（往返）
-    pulse_duration = pulse_end - pulse_start
-    distance = pulse_duration * 34300 / 2
-
-    return round(distance, 2)
-
-
-def cleanup():
-    """清理 GPIO"""
-    try:
-        # 取消导出
-        unexport_path = os.path.join(GPIO_PATH, "unexport")
-        with open(unexport_path, 'w') as f:
-            f.write(str(TRIG_PIN))
-        with open(unexport_path, 'w') as f:
-            f.write(str(ECHO_PIN))
-    except:
-        pass
 
 
 def run():
     """主循环"""
-    setup()
     print("=" * 40)
-    print("超声波测距测试")
+    print("CS100A 超声波测距 (I2C)")
     print("按 Ctrl+C 退出")
     print("=" * 40)
 
+    bus = setup_i2c()
+    if bus is None:
+        print("[错误] I2C 初始化失败，退出")
+        return
+
+    print("[信息] 开始测距...")
+
     try:
         while True:
-            dist = measure_distance()
+            dist = measure_distance(bus)
+
             if dist > 0:
-                print(f"距离: {dist:.2f} cm", end='')
-                if dist < 10:
+                # 转换为厘米显示
+                dist_cm = dist / 10.0
+                print(f"距离: {dist_cm:.1f} cm", end='')
+
+                if dist < 80:
                     print(" [近]", end='')
-                elif dist > 100:
+                elif dist > 150:
                     print(" [远]", end='')
                 else:
                     print(" [中]", end='')
                 print()
             else:
-                print("距离: 超时")
+                print("距离: 超时或无效")
+                print("  (请检查接线是否正确，I2C地址是否正确)")
+
             time.sleep(0.5)
 
     except KeyboardInterrupt:
         print("\n[信息] 退出程序")
     finally:
-        cleanup()
-        print("[信息] GPIO 已清理")
+        if bus:
+            bus.close()
+        print("[信息] 已关闭")
 
 
 if __name__ == "__main__":
