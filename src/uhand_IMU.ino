@@ -114,16 +114,18 @@ static int bbFilter(void) {
 #define DIST_MAX 500
 #define DIST_MIN 50
 
-#define THUMB_OPEN   180
-#define THUMB_CLOSE  0
-#define FINGER_OPEN  0
-#define FINGER_CLOSE 180
+// 张开状态：手指180度，大拇指0度
+#define FINGER_OPEN  180
+#define THUMB_OPEN   0
+
+// 闭合状态：手指0度，大拇指180度
+#define FINGER_CLOSE 0
+#define THUMB_CLOSE  180
 
 // 串口命令
 #define CMD_OPEN   1
 #define CMD_CLOSE  2
 #define CMD_AUTO   3
-#define CMD_MANUAL 4
 
 // ============================================
 // 全局变量
@@ -155,17 +157,24 @@ static int8_t calculate_step(uint8_t current, uint8_t target, uint8_t max_step);
 static uint16_t exponential_filter(uint16_t new_val, uint16_t old_val, float alpha);
 static void gripper_set_target(uint8_t thumb, uint8_t fingers);
 static void serial_task(void);
+static void write_all_servos(void);
 
 // ============================================
-// 抓取器初始化
+// 抓取器初始化 - 张开状态
 // ============================================
 static void gripper_init(void) {
-  gripper.current.thumb = 180;
-  gripper.current.index = 0;
-  gripper.current.middle = 0;
-  gripper.current.ring = 0;
-  gripper.current.pinky = 0;
-  gripper.target = gripper.current;
+  gripper.current.thumb = THUMB_OPEN;   // 180
+  gripper.current.index = FINGER_OPEN;  // 0
+  gripper.current.middle = FINGER_OPEN; // 0
+  gripper.current.ring = FINGER_OPEN;   // 0
+  gripper.current.pinky = FINGER_OPEN;  // 0
+
+  gripper.target.thumb = THUMB_OPEN;
+  gripper.target.index = FINGER_OPEN;
+  gripper.target.middle = FINGER_OPEN;
+  gripper.target.ring = FINGER_OPEN;
+  gripper.target.pinky = FINGER_OPEN;
+
   gripper.step_interval = 14;
   gripper.last_update = 0;
 }
@@ -184,12 +193,15 @@ static int8_t calculate_step(uint8_t current, uint8_t target, uint8_t max_step) 
   if (current == target) return 0;
 
   int16_t diff = (int16_t)target - (int16_t)current;
-  int16_t step = diff / 3.8f;
 
-  if (step > 0) {
+  if (diff > 0) {
+    // 需要增加
+    int16_t step = diff / 3.8f;
     return (int8_t)(step > max_step ? max_step : step);
   } else {
-    int8_t abs_step = (int8_t)(-step > max_step ? max_step : -step);
+    // 需要减少
+    int16_t step = -diff / 3.8f;
+    int8_t abs_step = (int8_t)(step > max_step ? max_step : step);
     return -abs_step;
   }
 }
@@ -214,17 +226,30 @@ static void gripper_update(void) {
   if (now - gripper.last_update < gripper.step_interval) return;
   gripper.last_update = now;
 
-  int8_t step_thumb = calculate_step(gripper.current.thumb, gripper.target.thumb, 3);
-  int8_t step_index = calculate_step(gripper.current.index, gripper.target.index, 3);
-  int8_t step_middle = calculate_step(gripper.current.middle, gripper.target.middle, 3);
-  int8_t step_ring = calculate_step(gripper.current.ring, gripper.target.ring, 3);
-  int8_t step_pinky = calculate_step(gripper.current.pinky, gripper.target.pinky, 3);
+  int8_t step_thumb = calculate_step(gripper.current.thumb, gripper.target.thumb, 5);
+  int8_t step_index = calculate_step(gripper.current.index, gripper.target.index, 5);
+  int8_t step_middle = calculate_step(gripper.current.middle, gripper.target.middle, 5);
+  int8_t step_ring = calculate_step(gripper.current.ring, gripper.target.ring, 5);
+  int8_t step_pinky = calculate_step(gripper.current.pinky, gripper.target.pinky, 5);
 
   gripper.current.thumb += step_thumb;
   gripper.current.index += step_index;
   gripper.current.middle += step_middle;
   gripper.current.ring += step_ring;
   gripper.current.pinky += step_pinky;
+}
+
+// ============================================
+// 写入所有舵机
+// ============================================
+static void write_all_servos(void) {
+  // 引脚: 7=大拇指, 6=食指, 5=中指, 4=无名指, 3=小拇指, 2=云台
+  servos[0].write(gripper.current.thumb);   // 大拇指
+  servos[1].write(gripper.current.index);   // 食指
+  servos[2].write(gripper.current.middle);  // 中指
+  servos[3].write(gripper.current.ring);     // 无名指
+  servos[4].write(gripper.current.pinky);    // 小拇指
+  servos[5].write(gimbal_fixed_angle);       // 云台
 }
 
 // ============================================
@@ -235,13 +260,13 @@ static void serial_task(void) {
     char cmd = Serial.read();
 
     switch (cmd) {
-      case 'O':  // OPEN - 张开（手动模式）
+      case 'O':  // OPEN - 张开
         control_mode = CMD_OPEN;
         gripper_set_target(THUMB_OPEN, FINGER_OPEN);
         Serial.println("CMD:OPEN");
         break;
 
-      case 'C':  // CLOSE - 闭合（手动模式）
+      case 'C':  // CLOSE - 闭合
         control_mode = CMD_CLOSE;
         gripper_set_target(THUMB_CLOSE, FINGER_CLOSE);
         Serial.println("CMD:CLOSE");
@@ -281,19 +306,20 @@ void setup() {
   i2c_init();
   Serial.println("I2C init OK");
 
+  // 初始化所有舵机
   for (int i = 0; i < 6; ++i) {
     servos[i].attach(servoPins[i], 500, 2500);
   }
   Serial.println("Servos OK");
 
+  // 初始化抓取器 - 张开状态
   gripper_init();
+  Serial.println("Gripper init OK");
 
-  servos[0].write(gripper.current.thumb);
-  servos[1].write(gripper.current.index);
-  servos[2].write(gripper.current.middle);
-  servos[3].write(gripper.current.ring);
-  servos[4].write(gripper.current.pinky);
-  servos[5].write(90);
+  // 写入初始位置 - 张开
+  write_all_servos();
+  Serial.println("Servos written - OPEN");
+
   delay(500);
 
   FastLED.addLeds<WS2812, rgbPin, GRB>(rgbs, 1);
@@ -326,7 +352,11 @@ void setup() {
 #endif
 
   Serial.println("=== READY ===");
-  Serial.println("Commands: O=Open, C=Close, A=Auto, ?=Status");
+  Serial.println("Commands: O=Open, C=Close, A=Auto, M=Manual, ?=Status");
+
+  // 确保手掌是张开状态
+  gripper_set_target(THUMB_OPEN, FINGER_OPEN);
+  write_all_servos();
 }
 
 // ============================================
@@ -343,12 +373,16 @@ void loop() {
   }
 #endif
 
+  // 更新舵机位置
+  gripper_update();
+  write_all_servos();
+
+  // 其他任务
   tune_task();
-  servo_control();
 }
 
 // ============================================
-// 抓取器任务（仅自动模式使用）
+// 抓取器任务（自动模式）
 // ============================================
 void gripper_task(void) {
   static uint32_t last_sensor_tick = 0;
@@ -364,31 +398,38 @@ void gripper_task(void) {
     current_distance = filtered_distance;
   }
 
+  // 计算抓取比例
+  // 距离远(500mm) -> 张开, 距离近(50mm) -> 握拳
   uint16_t dist_range = DIST_MAX - DIST_MIN;
   uint16_t dist_offset = current_distance - DIST_MIN;
 
   float ratio = (float)dist_offset / (float)dist_range;
-  float grip_ratio = pow(ratio, 0.8f);
+  // ratio: 500mm时=1, 50mm时=0
+  // grip_ratio: 500mm时=0(张开), 50mm时=1(握拳)
+  float grip_ratio = 1.0f - pow(ratio, 0.8f);
 
-  uint8_t finger_angle = (uint8_t)(grip_ratio * (FINGER_CLOSE - FINGER_OPEN));
-  uint8_t thumb_angle = (uint8_t)(grip_ratio * (THUMB_CLOSE - THUMB_OPEN) + THUMB_OPEN);
+  // 计算角度
+  // 距离远(500mm): grip_ratio=0 -> 张开(finger=180, thumb=0)
+  // 距离近(50mm): grip_ratio=1 -> 握拳(finger=0, thumb=180)
+  uint8_t finger_angle = (uint8_t)((1.0f - grip_ratio) * FINGER_OPEN);
+  uint8_t thumb_angle = (uint8_t)(grip_ratio * THUMB_CLOSE);
 
   gripper_set_target(thumb_angle, finger_angle);
-  gripper_update();
 
+  // LED颜色指示
   uint8_t r, g, b;
   if (current_distance > 350) {
-    r = 0; g = 255; b = 0;
+    r = 0; g = 255; b = 0;  // 绿色 - 安全
   } else if (current_distance > 150) {
     uint16_t mid = current_distance - 150;
     r = (uint8_t)(255 * mid / 200.0f);
     g = 255;
-    b = 0;
+    b = 0;  // 黄色渐变
   } else {
     uint16_t close = 150 - current_distance;
     r = 255;
     g = (uint8_t)(255 * close / 150.0f);
-    b = 0;
+    b = 0;  // 红色渐变
   }
 
   rgbs[0].r = r;
@@ -406,25 +447,6 @@ void gripper_task(void) {
       noTone(buzzerPin);
     }
   }
-}
-
-// ============================================
-// 舵机控制
-// ============================================
-void servo_control(void) {
-  static uint32_t last_tick = 0;
-  if (millis() - last_tick < 20) return;
-  last_tick = millis();
-
-  // 手动模式也需要更新舵机位置
-  gripper_update();
-
-  servos[0].write(gripper.current.thumb);
-  servos[1].write(gripper.current.index);
-  servos[2].write(gripper.current.middle);
-  servos[3].write(gripper.current.ring);
-  servos[4].write(gripper.current.pinky);
-  servos[5].write(gimbal_fixed_angle);
 }
 
 // ============================================
