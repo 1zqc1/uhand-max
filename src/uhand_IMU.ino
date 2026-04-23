@@ -1,11 +1,17 @@
 #include <FastLED.h>
 #include <Servo.h>
+#include <SoftwareSerial.h>
 #include "tone.h"
 #include "uhand_servo.h"
 
 // ========== 硬件配置开关 ==========
 #define USE_MPU6050 0
 #define USE_ULTRASOUND 1
+
+// ========== 软串口定义 (连接USB转TTL) ==========
+#define SOFT_RX 10
+#define SOFT_TX 12
+SoftwareSerial softSerial(SOFT_RX, SOFT_TX);
 
 // ========== BitBang I2C 定义 ==========
 #define I2C_SDA 18
@@ -134,7 +140,7 @@ static int bbFilter(void) {
 SmoothControl gripper;
 static uint16_t current_distance = 500;
 static uint16_t filtered_distance = 500;
-static uint8_t control_mode = CMD_AUTO;  // 1=OPEN, 2=CLOSE, 3=AUTO
+static uint8_t control_mode = CMD_AUTO;
 
 const static uint8_t servoPins[6] = { 7, 6, 5, 4, 3, 2 };
 const static uint8_t buzzerPin = 11;
@@ -163,11 +169,11 @@ static void write_all_servos(void);
 // 抓取器初始化 - 张开状态
 // ============================================
 static void gripper_init(void) {
-  gripper.current.thumb = THUMB_OPEN;   // 180
-  gripper.current.index = FINGER_OPEN;  // 0
-  gripper.current.middle = FINGER_OPEN; // 0
-  gripper.current.ring = FINGER_OPEN;   // 0
-  gripper.current.pinky = FINGER_OPEN;  // 0
+  gripper.current.thumb = THUMB_OPEN;
+  gripper.current.index = FINGER_OPEN;
+  gripper.current.middle = FINGER_OPEN;
+  gripper.current.ring = FINGER_OPEN;
+  gripper.current.pinky = FINGER_OPEN;
 
   gripper.target.thumb = THUMB_OPEN;
   gripper.target.index = FINGER_OPEN;
@@ -195,11 +201,9 @@ static int8_t calculate_step(uint8_t current, uint8_t target, uint8_t max_step) 
   int16_t diff = (int16_t)target - (int16_t)current;
 
   if (diff > 0) {
-    // 需要增加
     int16_t step = diff / 3.8f;
     return (int8_t)(step > max_step ? max_step : step);
   } else {
-    // 需要减少
     int16_t step = -diff / 3.8f;
     int8_t abs_step = (int8_t)(step > max_step ? max_step : step);
     return -abs_step;
@@ -243,51 +247,50 @@ static void gripper_update(void) {
 // 写入所有舵机
 // ============================================
 static void write_all_servos(void) {
-  // 引脚: 7=大拇指, 6=食指, 5=中指, 4=无名指, 3=小拇指, 2=云台
-  servos[0].write(gripper.current.thumb);   // 大拇指
-  servos[1].write(gripper.current.index);   // 食指
-  servos[2].write(gripper.current.middle);  // 中指
-  servos[3].write(gripper.current.ring);     // 无名指
-  servos[4].write(gripper.current.pinky);    // 小拇指
-  servos[5].write(gimbal_fixed_angle);       // 云台
+  servos[0].write(gripper.current.thumb);
+  servos[1].write(gripper.current.index);
+  servos[2].write(gripper.current.middle);
+  servos[3].write(gripper.current.ring);
+  servos[4].write(gripper.current.pinky);
+  servos[5].write(gimbal_fixed_angle);
 }
 
 // ============================================
 // 串口命令处理
 // ============================================
 static void serial_task(void) {
-  if (Serial.available() > 0) {
-    char cmd = Serial.read();
+  if (softSerial.available() > 0) {
+    char cmd = softSerial.read();
 
     switch (cmd) {
-      case 'O':  // OPEN - 张开
+      case 'O':
         control_mode = CMD_OPEN;
         gripper_set_target(THUMB_OPEN, FINGER_OPEN);
-        Serial.println("CMD:OPEN");
+        softSerial.println("CMD:OPEN");
         break;
 
-      case 'C':  // CLOSE - 闭合
+      case 'C':
         control_mode = CMD_CLOSE;
         gripper_set_target(THUMB_CLOSE, FINGER_CLOSE);
-        Serial.println("CMD:CLOSE");
+        softSerial.println("CMD:CLOSE");
         break;
 
-      case 'A':  // AUTO - 自动
+      case 'A':
         control_mode = CMD_AUTO;
-        Serial.println("CMD:AUTO");
+        softSerial.println("CMD:AUTO");
         break;
 
-      case 'M':  // MANUAL - 手动模式，初始化为张开
+      case 'M':
         control_mode = CMD_OPEN;
         gripper_set_target(THUMB_OPEN, FINGER_OPEN);
-        Serial.println("CMD:MANUAL");
+        softSerial.println("CMD:MANUAL");
         break;
 
-      case '?':  // 查询状态
-        Serial.print("DIST:");
-        Serial.println(current_distance);
-        Serial.print("MODE:");
-        Serial.println(control_mode);
+      case '?':
+        softSerial.print("DIST:");
+        softSerial.println(current_distance);
+        softSerial.print("MODE:");
+        softSerial.println(control_mode);
         break;
     }
   }
@@ -297,64 +300,61 @@ static void serial_task(void) {
 // setup
 // ============================================
 void setup() {
-  Serial.begin(9600);
-  Serial.setTimeout(50);
+  // 初始化软串口（用于与下位机通信）
+  // RX=D10, TX=D12
+  softSerial.begin(9600);
 
-  Serial.println("=== START ===");
-  delay(100);
+  softSerial.println("=== START ===");
+  delay(200);
 
   i2c_init();
-  Serial.println("I2C init OK");
+  softSerial.println("I2C init OK");
 
-  // 初始化所有舵机
   for (int i = 0; i < 6; ++i) {
     servos[i].attach(servoPins[i], 500, 2500);
   }
-  Serial.println("Servos OK");
+  softSerial.println("Servos OK");
 
-  // 初始化抓取器 - 张开状态
   gripper_init();
-  Serial.println("Gripper init OK");
+  softSerial.println("Gripper init OK");
 
-  // 写入初始位置 - 张开
   write_all_servos();
-  Serial.println("Servos written - OPEN");
+  softSerial.println("Servos written - OPEN");
 
   delay(500);
 
   FastLED.addLeds<WS2812, rgbPin, GRB>(rgbs, 1);
   rgbs[0] = CRGB(0, 100, 0);
   FastLED.show();
-  Serial.println("RGB OK");
+  softSerial.println("RGB OK");
 
   pinMode(buzzerPin, OUTPUT);
   digitalWrite(buzzerPin, HIGH);
   delay(100);
   digitalWrite(buzzerPin, LOW);
-  Serial.println("Buzzer OK");
+  softSerial.println("Buzzer OK");
 
 #if !USE_MPU6050
-  Serial.println("MPU6050 SKIP");
+  softSerial.println("MPU6050 SKIP");
 #endif
 
 #if !USE_ULTRASOUND
-  Serial.println("Ultrasound SKIP");
+  softSerial.println("Ultrasound SKIP");
 #else
-  Serial.println("Ultrasound init...");
+  softSerial.println("Ultrasound init...");
   delay(200);
   int test_dist = bbFilter();
   if (test_dist > 0) {
-    Serial.print("Ultrasound OK: ");
-    Serial.println(test_dist);
+    softSerial.print("Ultrasound OK: ");
+    softSerial.println(test_dist);
   } else {
-    Serial.println("Ultrasound FAIL");
+    softSerial.println("Ultrasound FAIL");
   }
 #endif
 
-  Serial.println("=== READY ===");
-  Serial.println("Commands: O=Open, C=Close, A=Auto, M=Manual, ?=Status");
+  softSerial.println("=== READY ===");
+  softSerial.println("Commands: O=Open, C=Close, A=Auto, M=Manual, ?=Status");
 
-  // 确保手掌是张开状态
   gripper_set_target(THUMB_OPEN, FINGER_OPEN);
   write_all_servos();
 }
@@ -363,21 +363,17 @@ void setup() {
 // loop
 // ============================================
 void loop() {
-  // 处理串口命令
   serial_task();
 
 #if USE_ULTRASOUND
-  // 自动模式：根据距离控制
   if (control_mode == CMD_AUTO) {
     gripper_task();
   }
 #endif
 
-  // 更新舵机位置
   gripper_update();
   write_all_servos();
 
-  // 其他任务
   tune_task();
 }
 
@@ -398,38 +394,30 @@ void gripper_task(void) {
     current_distance = filtered_distance;
   }
 
-  // 计算抓取比例
-  // 距离远(500mm) -> 张开, 距离近(50mm) -> 握拳
   uint16_t dist_range = DIST_MAX - DIST_MIN;
   uint16_t dist_offset = current_distance - DIST_MIN;
 
   float ratio = (float)dist_offset / (float)dist_range;
-  // ratio: 500mm时=1, 50mm时=0
-  // grip_ratio: 500mm时=0(张开), 50mm时=1(握拳)
   float grip_ratio = 1.0f - pow(ratio, 0.8f);
 
-  // 计算角度
-  // 距离远(500mm): grip_ratio=0 -> 张开(finger=180, thumb=0)
-  // 距离近(50mm): grip_ratio=1 -> 握拳(finger=0, thumb=180)
   uint8_t finger_angle = (uint8_t)((1.0f - grip_ratio) * FINGER_OPEN);
   uint8_t thumb_angle = (uint8_t)(grip_ratio * THUMB_CLOSE);
 
   gripper_set_target(thumb_angle, finger_angle);
 
-  // LED颜色指示
   uint8_t r, g, b;
   if (current_distance > 350) {
-    r = 0; g = 255; b = 0;  // 绿色 - 安全
+    r = 0; g = 255; b = 0;
   } else if (current_distance > 150) {
     uint16_t mid = current_distance - 150;
     r = (uint8_t)(255 * mid / 200.0f);
     g = 255;
-    b = 0;  // 黄色渐变
+    b = 0;
   } else {
     uint16_t close = 150 - current_distance;
     r = 255;
     g = (uint8_t)(255 * close / 150.0f);
-    b = 0;  // 红色渐变
+    b = 0;
   }
 
   rgbs[0].r = r;
@@ -437,7 +425,6 @@ void gripper_task(void) {
   rgbs[0].b = b;
   FastLED.show();
 
-  // 近距离蜂鸣警报
   if (current_distance < 80) {
     static uint32_t last_beep = 0;
     if (millis() - last_beep > 300) {
@@ -468,7 +455,6 @@ void tune_task(void) {
   }
 }
 
-// 蜂鸣器鸣响函数
 void play_tune(uint16_t *p, uint32_t beat, uint16_t len) {
   tune = p;
   tune_beat = beat;
