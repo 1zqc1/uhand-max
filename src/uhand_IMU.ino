@@ -27,7 +27,7 @@ const uint8_t SERVO_PINS[6] = {7, 6, 5, 4, 3, 2};  // 拇指、食指、中指�
 
 // 命令模式
 enum Mode { CMD_OPEN = 1, CMD_CLOSE, CMD_AUTO, CMD_HANDSHAKE, CMD_PINCH,
-            CMD_GRIP, CMD_POINT, CMD_RELAX, CMD_MANUAL };
+            CMD_GRIP, CMD_POINT, CMD_RELAX, CMD_MANUAL, CMD_RELAX_SEQ };
 
 // 全局状态
 static enum Mode mode = CMD_OPEN;
@@ -36,7 +36,7 @@ static uint8_t finger_target[5];    // 5个手指的目标角度
 static uint8_t finger_current[5];   // 5个手指的当前角度
 static uint32_t t_servo = 0, t_sensor = 0;
 static uint32_t t_relax = 0;       // 放松模式定时器
-static bool relax_open = true;     // 放松模式：张开/闭合状态
+static bool relax_open = true;     // 放松模式：张开/闭合切换
 static CRGB led;
 static Servo servos[6];
 
@@ -133,22 +133,6 @@ static void auto_mode(void) {
     }
 }
 
-// ========== 放松模式 ==========
-// 有规律地张合手掌（每500ms切换一次）
-static void relax_mode(void) {
-    if (millis() - t_relax < 500) return;
-    t_relax = millis();
-
-    relax_open = !relax_open;
-    if (relax_open) {
-        // 张开状态
-        finger_set(THUMB_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN);
-    } else {
-        // 闭合状态
-        finger_set(THUMB_CLOSE, FINGER_CLOSE, FINGER_CLOSE, FINGER_CLOSE, FINGER_CLOSE);
-    }
-}
-
 // ========== 命令处理 ==========
 static void handle_cmd(char cmd) {
     Serial.print("CMD:");
@@ -192,8 +176,10 @@ static void handle_cmd(char cmd) {
             finger_set(120, 180, 60, 60, 60);
             Serial.println("POINT");
             break;
-        case 'R':  // 放松
-            mode = CMD_RELAX;
+        case 'R':  // 放松 - 有节奏地抓取
+            mode = CMD_RELAX_SEQ;
+            relax_open = true;
+            t_relax = millis();
             finger_set(THUMB_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN);
             Serial.println("RELAX");
             break;
@@ -244,7 +230,19 @@ void loop() {
     if (Serial.available()) handle_cmd(Serial.read());
 
     if (mode == CMD_AUTO) auto_mode();
-    if (mode == CMD_RELAX) relax_mode();
+
+    // 放松模式：每800ms切换张开/闭合
+    if (mode == CMD_RELAX_SEQ) {
+        if (millis() - t_relax >= 800) {
+            t_relax = millis();
+            relax_open = !relax_open;
+            if (relax_open) {
+                finger_set(THUMB_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN);
+            } else {
+                finger_set(THUMB_CLOSE, FINGER_CLOSE, FINGER_CLOSE, FINGER_CLOSE, FINGER_CLOSE);
+            }
+        }
+    }
 
     servo_update();
 

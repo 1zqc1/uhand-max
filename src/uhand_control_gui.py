@@ -510,19 +510,15 @@ class UhandControlGUI:
                 pass
         # MODE:1-9 - 模式数据
         elif line.startswith("MODE:"):
-            mode_num = line[5:]
+            mode_num = line[5:].strip()
             mode_map = {
                 "1": "张开", "2": "闭合", "3": "自动",
                 "4": "握手", "5": "捏取", "6": "全握",
                 "7": "指向", "8": "放松", "9": "手动"
             }
-            mode = mode_map.get(mode_num, "未知")
-            self.mode = mode
-            # 根据Arduino返回的模式更新GUI状态
-            if mode_num == "3":
-                self.is_auto_mode = True
-            else:
-                self.is_auto_mode = False
+            self.mode = mode_map.get(mode_num, "未知")
+            # 只有MODE:3才表示自动模式
+            self.is_auto_mode = (mode_num == "3")
         # CMD:xxx - 命令确认
         elif line.startswith("CMD:"):
             cmd_raw = line[4:].strip()
@@ -533,8 +529,8 @@ class UhandControlGUI:
             }
             cmd = cmd_map.get(cmd_raw, cmd_raw)
             self.mode = cmd
-            if cmd == "自动":
-                self.is_auto_mode = True
+            # 只有CMD:AUTO才表示自动模式
+            self.is_auto_mode = (cmd == "自动")
 
     def _update_loop(self):
         """定时更新界面数据"""
