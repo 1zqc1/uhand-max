@@ -2,25 +2,95 @@
 # -*- coding: utf-8 -*-
 """
 ESP32-CAM 视频流显示程序
-在飞腾派HDMI显示器上实时显示ESP32-CAM视频
-
-用法:
-    python3 esp32_cam_display.py [IP]
-    IP: ESP32-CAM的IP地址 (默认: 192.168.5.1)
+通过 urllib 获取MJPEG视频流并显示
 """
 
 import cv2
+import numpy
 import os
 import sys
+import urllib.request
+import threading
 from datetime import datetime
 
 
+class MJPEGCapture:
+    """MJPEG视频流捕获器"""
+
+    def __init__(self, ip):
+        self.ip = ip
+        self.frame = None
+        self.running = False
+        self.thread = None
+        self.lock = threading.Lock()
+
+    def _fetch(self):
+        """获取视频帧"""
+        while self.running:
+            try:
+                url = f"http://{self.ip}/stream"
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                response = urllib.request.urlopen(req, timeout=10)
+
+                bytes_data = b''
+                while self.running:
+                    chunk = response.read(8192)
+                    if not chunk:
+                        break
+                    bytes_data += chunk
+
+                    # 查找JPEG帧
+                    while True:
+                        start = bytes_data.find(b'\xff\xd8')
+                        end = bytes_data.find(b'\xff\xd9', start + 2 if start != -1 else 0)
+
+                        if start != -1 and end != -1 and end > start:
+                            jpg = bytes_data[start:end + 2]
+                            bytes_data = bytes_data[end + 2:]
+
+                            img = cv2.imdecode(
+                                numpy.frombuffer(jpg, numpy.uint8),
+                                cv2.IMREAD_COLOR
+                            )
+
+                            if img is not None:
+                                with self.lock:
+                                    self.frame = img
+                        else:
+                            break
+
+            except Exception as e:
+                print(f"[错误] {e}")
+                if self.running:
+                    threading.Event().wait(2)
+
+    def start(self):
+        """启动捕获"""
+        self.running = True
+        self.thread = threading.Thread(target=self._fetch, daemon=True)
+        self.thread.start()
+        print(f"[INFO] 连接 {self.ip}")
+
+    def stop(self):
+        """停止捕获"""
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=2)
+
+    def read(self):
+        """读取当前帧"""
+        with self.lock:
+            if self.frame is not None:
+                return self.frame.copy()
+            return None
+
+
 def main():
-    # 自动设置显示环境
+    # 设置显示环境
     if not os.environ.get('DISPLAY'):
         os.environ['DISPLAY'] = ':0'
 
-    # 获取IP地址
+    # 获取IP
     ip = sys.argv[1] if len(sys.argv) > 1 else "192.168.5.1"
 
     print("=" * 50)
@@ -28,73 +98,53 @@ def main():
     print("=" * 50)
     print(f"IP: {ip}")
 
-    # 方式1: 直接用OpenCV的VideoCapture
-    url = f"http://{ip}/stream"
-    print(f"尝试连接: {url}")
+    # 启动捕获
+    cap = MJPEGCapture(ip)
+    cap.start()
 
-    cap = cv2.VideoCapture(url)
-
-    if not cap.isOpened():
-        print("[INFO] VideoCapture方式失败，尝试备用方式...")
-        cap.release()
-
-        # 方式2: 尝试不同的URL格式
-        for path in ["/", "/video", "/mjpeg"]:
-            url = f"http://{ip}{path}"
-            print(f"[INFO] 尝试: {url}")
-            cap = cv2.VideoCapture(url)
-            if cap.isOpened():
-                print(f"[成功] 连接: {url}")
-                break
-
-    if not cap.isOpened():
-        print("[错误] 无法打开视频流，请检查:")
-        print("1. ESP32-CAM是否正常工作")
-        print("2. IP地址是否正确")
-        print("3. WiFi是否连接")
+    # 等待首帧
+    print("[INFO] 等待视频...")
+    for _ in range(50):
+        if cap.read() is not None:
+            break
+        threading.Event().wait(0.1)
+    else:
+        print("[错误] 无法获取视频流")
+        cap.stop()
         return
 
-    print("[成功] 视频流已打开")
+    print("[成功] 视频已连接")
 
     # 创建窗口
-    window_name = "ESP32-CAM"
-    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(window_name, 800, 600)
+    window = "ESP32-CAM"
+    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window, 800, 600)
 
-    frame_count = 0
+    count = 0
     save_dir = os.path.dirname(os.path.abspath(__file__)) or "."
 
-    print("[INFO] 按 'q' 退出, 's' 保存截图")
+    print("[INFO] 'q'退出 's'截图")
 
     while True:
-        ret, frame = cap.read()
+        frame = cap.read()
 
-        if ret:
-            frame_count += 1
+        if frame is not None:
+            count += 1
+            cv2.imshow(window, frame)
+            if count % 60 == 0:
+                print(f"[INFO] 帧: {count}")
 
-            # 显示帧
-            cv2.imshow(window_name, frame)
-
-            # 显示状态
-            if frame_count % 30 == 0:
-                print(f"[INFO] 显示帧: {frame_count}, 尺寸: {frame.shape}")
-
-        # 按键处理
         key = cv2.waitKey(1) & 0xFF
-
         if key == ord('q'):
-            print("[INFO] 退出")
             break
-        elif key == ord('s') and ret:
-            # 保存截图
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = os.path.join(save_dir, f"screenshot_{timestamp}.jpg")
-            cv2.imwrite(filename, frame)
-            print(f"[INFO] 截图已保存: {filename}")
+        elif key == ord('s') and frame is not None:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            cv2.imwrite(f"{save_dir}/screenshot_{ts}.jpg", frame)
+            print(f"[INFO] 已保存截图")
 
-    cap.release()
+    cap.stop()
     cv2.destroyAllWindows()
-    print("[INFO] 程序已退出")
+    print("[INFO] 完成")
 
 
 if __name__ == "__main__":
