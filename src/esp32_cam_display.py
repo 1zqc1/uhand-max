@@ -26,12 +26,16 @@ class MJPEGCapture:
 
     def _fetch(self):
         """获取视频帧"""
-        # 尝试多个可能的URL路径
-        paths = ['/stream', '/', '/video', '/mjpeg']
+        # 尝试多个可能的URL路径和端口
+        urls_to_try = [
+            f"http://{self.ip}:81/stream",
+            f"http://{self.ip}:81/",
+            f"http://{self.ip}/stream",
+            f"http://{self.ip}/",
+        ]
         url = None
 
-        for path in paths:
-            test_url = f"http://{self.ip}{path}"
+        for test_url in urls_to_try:
             print(f"[INFO] 尝试: {test_url}")
             try:
                 req = urllib.request.Request(test_url, headers={'User-Agent': 'Mozilla/5.0'})
