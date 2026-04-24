@@ -535,8 +535,8 @@ class UhandControlGUI:
             self.mode = cmd
             if cmd == "自动":
                 self.is_auto_mode = True
-            else:
-                self.is_auto_mode = False
+                # 立即更新界面
+                self.root.after(0, self._update_mode_display)
 
     def _update_loop(self):
         """定时更新界面数据"""

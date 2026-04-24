@@ -35,6 +35,8 @@ static uint16_t distance = 500;
 static uint8_t finger_target[5];    // 5个手指的目标角度
 static uint8_t finger_current[5];   // 5个手指的当前角度
 static uint32_t t_servo = 0, t_sensor = 0;
+static uint32_t t_relax = 0;       // 放松模式定时器
+static bool relax_open = true;     // 放松模式：张开/闭合状态
 static CRGB led;
 static Servo servos[6];
 
@@ -128,6 +130,22 @@ static void auto_mode(void) {
             delay(30);
             noTone(BUZZER);
         }
+    }
+}
+
+// ========== 放松模式 ==========
+// 有规律地张合手掌（每500ms切换一次）
+static void relax_mode(void) {
+    if (millis() - t_relax < 500) return;
+    t_relax = millis();
+
+    relax_open = !relax_open;
+    if (relax_open) {
+        // 张开状态
+        finger_set(THUMB_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN);
+    } else {
+        // 闭合状态
+        finger_set(THUMB_CLOSE, FINGER_CLOSE, FINGER_CLOSE, FINGER_CLOSE, FINGER_CLOSE);
     }
 }
 
@@ -226,6 +244,7 @@ void loop() {
     if (Serial.available()) handle_cmd(Serial.read());
 
     if (mode == CMD_AUTO) auto_mode();
+    if (mode == CMD_RELAX) relax_mode();
 
     servo_update();
 
