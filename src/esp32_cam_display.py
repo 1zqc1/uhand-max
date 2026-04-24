@@ -15,7 +15,6 @@ ESP32-CAM 视频流显示程序
 
 import cv2
 import numpy as np
-import requests
 import threading
 import time
 import sys
@@ -96,8 +95,10 @@ class MJPEGStream:
             return self.frame.copy() if self.frame is not None else None
 
 
-def save_screenshot(frame, save_dir="."):
+def save_screenshot(frame, save_dir=None):
     """保存截图"""
+    if save_dir is None:
+        save_dir = os.path.dirname(os.path.abspath(__file__)) or "."
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = os.path.join(save_dir, f"screenshot_{timestamp}.jpg")
     cv2.imwrite(filename, frame)
@@ -143,7 +144,6 @@ def main():
     cv2.resizeWindow(window_name, 800, 600)
 
     fullscreen = False
-    screenshot_count = 0
 
     try:
         while True:
@@ -153,9 +153,12 @@ def main():
                 # 显示帧
                 cv2.imshow(window_name, frame)
 
-                # 添加信息叠加
-                info_text = f"ESP32-CAM: {ip} | Press 'q' to quit"
-                cv2.displayOverlay(window_name, info_text, 3000)
+                # 添加信息叠加（部分OpenCV版本不支持displayOverlay）
+                try:
+                    info_text = f"ESP32-CAM: {ip} | Press 'q' to quit"
+                    cv2.displayOverlay(window_name, info_text, 3000)
+                except AttributeError:
+                    pass  # 忽略不支持的版本
 
             # 等待按键
             key = cv2.waitKey(1) & 0xFF
@@ -166,8 +169,7 @@ def main():
 
             elif key == ord('s'):
                 if frame is not None:
-                    filename = save_screenshot(frame)
-                    screenshot_count += 1
+                    save_screenshot(frame)
 
             elif key == ord('f'):
                 fullscreen = not fullscreen
