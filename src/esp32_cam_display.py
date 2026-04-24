@@ -143,10 +143,9 @@ def save_screenshot(frame, save_dir=None):
 
 
 def main():
-    # 检查显示环境
+    # 自动设置显示环境
     if not os.environ.get('DISPLAY'):
         os.environ['DISPLAY'] = ':0'
-        print("[INFO] 已设置 DISPLAY=:0")
 
     # 获取IP地址参数
     if len(sys.argv) > 1:
