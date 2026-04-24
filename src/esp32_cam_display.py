@@ -26,9 +26,29 @@ class MJPEGCapture:
 
     def _fetch(self):
         """获取视频帧"""
+        # 尝试多个可能的URL路径
+        paths = ['/stream', '/', '/video', '/mjpeg']
+        url = None
+
+        for path in paths:
+            test_url = f"http://{self.ip}{path}"
+            print(f"[INFO] 尝试: {test_url}")
+            try:
+                req = urllib.request.Request(test_url, headers={'User-Agent': 'Mozilla/5.0'})
+                response = urllib.request.urlopen(req, timeout=5)
+                url = test_url
+                print(f"[成功] 使用: {url}")
+                break
+            except Exception as e:
+                print(f"[失败] {test_url}: {e}")
+                continue
+
+        if url is None:
+            print("[错误] 所有URL都失败")
+            return
+
         while self.running:
             try:
-                url = f"http://{self.ip}/stream"
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 response = urllib.request.urlopen(req, timeout=10)
 
@@ -60,7 +80,7 @@ class MJPEGCapture:
                             break
 
             except Exception as e:
-                print(f"[错误] {e}")
+                print(f"[错误] 连接断开: {e}")
                 if self.running:
                     threading.Event().wait(2)
 
