@@ -527,10 +527,9 @@ class UhandControlGUI:
         elif line.startswith("CMD:"):
             cmd_raw = line[4:].strip()
             cmd_map = {
-                "OPEN": "张开", "CLOSE": "闭合", "AUTO": "自动",
-                "MANUAL": "手动", "HANDSHAKE": "握手", "PINCH": "捏取",
-                "GRIP": "全握", "POINT": "指向", "RELAX": "放松",
-                "QUERY": "查询"
+                "OPEN": "张开", "CLOSE": "闭合", "AUTO": "自动", "AUTO\r": "自动",
+                "MANUAL": "手动", "MANUAL\r": "手动", "HANDSHAKE": "握手", "PINCH": "捏取",
+                "GRIP": "全握", "POINT": "指向", "RELAX": "放松", "QUERY": "查询"
             }
             cmd = cmd_map.get(cmd_raw, cmd_raw)
             self.mode = cmd
