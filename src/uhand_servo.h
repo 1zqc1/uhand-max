@@ -20,7 +20,4 @@ typedef struct {
   uint32_t last_update;
 } SmoothControl;
 
-// 声明 gripper 变量（在 uhand_IMU.ino 中定义）
-extern SmoothControl gripper;
-
 #endif

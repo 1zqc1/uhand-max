@@ -249,38 +249,128 @@ class UhandControlGUI:
         # 张开按钮
         self.open_btn = Button(
             gripper_inner,
-            text="张开",
+            text="张开(O)",
             command=self._gripper_open,
-            width=12,
-            height=3,
-            font=("微软雅黑", 16, "bold"),
+            width=8,
+            height=2,
+            font=("微软雅黑", 12, "bold"),
             bg="#2ecc71",
             fg="white",
             activebackground="#27ae60",
             activeforeground="white",
             relief=RAISED,
-            bd=4,
+            bd=3,
             state=DISABLED
         )
-        self.open_btn.pack(side=LEFT, padx=10, pady=5)
+        self.open_btn.pack(side=LEFT, padx=5, pady=3)
 
         # 闭合按钮
         self.close_btn = Button(
             gripper_inner,
-            text="闭合",
+            text="闭合(C)",
             command=self._gripper_close,
-            width=12,
-            height=3,
-            font=("微软雅黑", 16, "bold"),
+            width=8,
+            height=2,
+            font=("微软雅黑", 12, "bold"),
             bg="#e74c3c",
             fg="white",
             activebackground="#c0392b",
             activeforeground="white",
             relief=RAISED,
-            bd=4,
+            bd=3,
             state=DISABLED
         )
-        self.close_btn.pack(side=LEFT, padx=10, pady=5)
+        self.close_btn.pack(side=LEFT, padx=5, pady=3)
+
+        # 握手按钮
+        self.handshake_btn = Button(
+            gripper_inner,
+            text="握手(H)",
+            command=self._gripper_handshake,
+            width=8,
+            height=2,
+            font=("微软雅黑", 12, "bold"),
+            bg="#3498db",
+            fg="white",
+            activebackground="#2980b9",
+            activeforeground="white",
+            relief=RAISED,
+            bd=3,
+            state=DISABLED
+        )
+        self.handshake_btn.pack(side=LEFT, padx=5, pady=3)
+
+        # 捏取按钮
+        self.pinch_btn = Button(
+            gripper_inner,
+            text="捏取(P)",
+            command=self._gripper_pinch,
+            width=8,
+            height=2,
+            font=("微软雅黑", 12, "bold"),
+            bg="#9b59b6",
+            fg="white",
+            activebackground="#8e44ad",
+            activeforeground="white",
+            relief=RAISED,
+            bd=3,
+            state=DISABLED
+        )
+        self.pinch_btn.pack(side=LEFT, padx=5, pady=3)
+
+        # 全握按钮
+        self.grip_btn = Button(
+            gripper_inner,
+            text="全握(G)",
+            command=self._gripper_grip,
+            width=8,
+            height=2,
+            font=("微软雅黑", 12, "bold"),
+            bg="#e67e22",
+            fg="white",
+            activebackground="#d35400",
+            activeforeground="white",
+            relief=RAISED,
+            bd=3,
+            state=DISABLED
+        )
+        self.grip_btn.pack(side=LEFT, padx=5, pady=3)
+
+        # 指向按钮
+        self.point_btn = Button(
+            gripper_inner,
+            text="指向(F)",
+            command=self._gripper_point,
+            width=8,
+            height=2,
+            font=("微软雅黑", 12, "bold"),
+            bg="#1abc9c",
+            fg="white",
+            activebackground="#16a085",
+            activeforeground="white",
+            relief=RAISED,
+            bd=3,
+            state=DISABLED
+        )
+        self.point_btn.pack(side=LEFT, padx=5, pady=3)
+
+        # 放松按钮
+        self.relax_btn = Button(
+            gripper_inner,
+            text="放松(R)",
+            command=self._gripper_relax,
+            width=8,
+            height=2,
+            font=("微软雅黑", 12, "bold"),
+            bg="#95a5a6",
+            fg="white",
+            activebackground="#7f8c8d",
+            activeforeground="white",
+            relief=RAISED,
+            bd=3,
+            state=DISABLED
+        )
+        self.relax_btn.pack(side=LEFT, padx=5, pady=3)
 
         # 状态提示
         self.gripper_status = StringVar(value="状态: 请先连接")
@@ -323,6 +413,11 @@ class UhandControlGUI:
         """设置按钮状态"""
         self.open_btn.config(state=state)
         self.close_btn.config(state=state)
+        self.handshake_btn.config(state=state)
+        self.pinch_btn.config(state=state)
+        self.grip_btn.config(state=state)
+        self.point_btn.config(state=state)
+        self.relax_btn.config(state=state)
         self.auto_btn.config(state=state)
         self.manual_btn.config(state=state)
 
@@ -332,14 +427,12 @@ class UhandControlGUI:
             self.mode_indicator.config(text="当前: 自动模式", fg="#3498db")
             self.mode_var.set("自动")
             # 自动模式下禁用手动控制按钮
-            self.open_btn.config(state=DISABLED)
-            self.close_btn.config(state=DISABLED)
+            self._set_buttons_state(DISABLED)
             self.gripper_status.set("状态: 自动跟随距离")
         else:
             self.mode_indicator.config(text="当前: 手动模式", fg="#9b59b6")
-            # 手动模式下启用手动控制按钮
-            self.open_btn.config(state=NORMAL)
-            self.close_btn.config(state=NORMAL)
+            # 手动模式下启用所有控制按钮
+            self._set_buttons_state(NORMAL)
             self.gripper_status.set("状态: 手动控制")
 
     def _connect(self):
@@ -415,20 +508,31 @@ class UhandControlGUI:
                 self.distance = int(line[5:])
             except ValueError:
                 pass
-        # MODE:1/2/3 - 模式数据
+        # MODE:1-9 - 模式数据
         elif line.startswith("MODE:"):
-            mode_map = {"1": "张开", "2": "闭合", "3": "自动"}
-            mode = mode_map.get(line[5:], "未知")
+            mode_num = line[5:]
+            mode_map = {
+                "1": "张开", "2": "闭合", "3": "自动",
+                "4": "握手", "5": "捏取", "6": "全握",
+                "7": "指向", "8": "放松", "9": "手动"
+            }
+            mode = mode_map.get(mode_num, "未知")
             self.mode = mode
             # 根据Arduino返回的模式更新GUI状态
-            if line[5:] == "3":
+            if mode_num == "3":
                 self.is_auto_mode = True
             else:
                 self.is_auto_mode = False
         # CMD:xxx - 命令确认
         elif line.startswith("CMD:"):
-            cmd_map = {"OPEN": "张开", "CLOSE": "闭合", "AUTO": "自动"}
-            cmd = cmd_map.get(line[4:], line[4:])
+            cmd_raw = line[4:].strip()
+            cmd_map = {
+                "OPEN": "张开", "CLOSE": "闭合", "AUTO": "自动",
+                "MANUAL": "手动", "HANDSHAKE": "握手", "PINCH": "捏取",
+                "GRIP": "全握", "POINT": "指向", "RELAX": "放松",
+                "QUERY": "查询"
+            }
+            cmd = cmd_map.get(cmd_raw, cmd_raw)
             self.mode = cmd
             if cmd == "自动":
                 self.is_auto_mode = True
@@ -510,6 +614,71 @@ class UhandControlGUI:
             self.serial_port.write(b'C')
             self.gripper_status.set("状态: 闭合")
             self._log("发送命令: 闭合")
+        except Exception as e:
+            messagebox.showerror("错误", f"发送失败: {e}")
+
+    def _gripper_handshake(self):
+        """握手模式"""
+        if not self.is_connected:
+            messagebox.showwarning("警告", "请先连接串口")
+            return
+
+        try:
+            self.serial_port.write(b'H')
+            self.gripper_status.set("状态: 握手")
+            self._log("发送命令: 握手")
+        except Exception as e:
+            messagebox.showerror("错误", f"发送失败: {e}")
+
+    def _gripper_pinch(self):
+        """捏取模式"""
+        if not self.is_connected:
+            messagebox.showwarning("警告", "请先连接串口")
+            return
+
+        try:
+            self.serial_port.write(b'P')
+            self.gripper_status.set("状态: 捏取")
+            self._log("发送命令: 捏取")
+        except Exception as e:
+            messagebox.showerror("错误", f"发送失败: {e}")
+
+    def _gripper_grip(self):
+        """全握模式"""
+        if not self.is_connected:
+            messagebox.showwarning("警告", "请先连接串口")
+            return
+
+        try:
+            self.serial_port.write(b'G')
+            self.gripper_status.set("状态: 全握")
+            self._log("发送命令: 全握")
+        except Exception as e:
+            messagebox.showerror("错误", f"发送失败: {e}")
+
+    def _gripper_point(self):
+        """指向模式"""
+        if not self.is_connected:
+            messagebox.showwarning("警告", "请先连接串口")
+            return
+
+        try:
+            self.serial_port.write(b'F')
+            self.gripper_status.set("状态: 指向")
+            self._log("发送命令: 指向")
+        except Exception as e:
+            messagebox.showerror("错误", f"发送失败: {e}")
+
+    def _gripper_relax(self):
+        """放松模式"""
+        if not self.is_connected:
+            messagebox.showwarning("警告", "请先连接串口")
+            return
+
+        try:
+            self.serial_port.write(b'R')
+            self.gripper_status.set("状态: 放松")
+            self._log("发送命令: 放松")
         except Exception as e:
             messagebox.showerror("错误", f"发送失败: {e}")
 
