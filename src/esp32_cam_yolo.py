@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ESP32-CAM + YOLO 目标检测程序
-使用 OpenCV DNN 模块加载 ONNX 模型进行实时目标检测
+支持 OpenCV DNN 和 ONNX Runtime 两种后端
 """
 
 import cv2
@@ -148,106 +148,249 @@ class YOLODetector:
         'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
     ]
 
-    # 检测类别过滤（设为空则检测所有类别）
-    # 例如只检测人、车: ['person', 'car', 'motorcycle']
-    FILTER_CLASSES = []
-
     def __init__(self, model_path=None, conf_threshold=0.5, nms_threshold=0.4):
-        """
-        初始化 YOLO 检测器
-
-        Args:
-            model_path: ONNX 模型路径，None 则使用默认路径
-            conf_threshold: 置信度阈值
-            nms_threshold: NMS 阈值
-        """
         self.conf_threshold = conf_threshold
         self.nms_threshold = nms_threshold
+        self.model_path = model_path
+        self.net = None
+        self.session = None
+        self.input_name = None
+        self.output_name = None
+        self.input_size = (416, 416)
+        self.using_onnx_runtime = False
 
         # 尝试查找模型
         if model_path is None:
             model_path = self._find_model()
 
-        self.net = None
-        self.model_path = model_path
-
         if model_path and os.path.exists(model_path):
-            print(f"[INFO] 加载 YOLO 模型: {model_path}")
-            self.net = cv2.dnn.readNet(model_path)
-            self._setup_backend()
+            print(f"[INFO] 模型路径: {model_path}")
+            self._load_model(model_path)
         else:
-            print(f"[WARN] YOLO 模型未找到: {model_path}")
+            print(f"[WARN] 模型未找到: {model_path}")
             print("[INFO] 将使用颜色检测作为备选方案")
-            self.net = None
-
-        # 获取输出层信息
-        self.output_layers = None
-        self.input_size = (416, 416)  # YOLOv3/v4 默认输入尺寸
-
-        if self.net:
-            self._get_output_layers()
 
     def _find_model(self):
         """查找 YOLO 模型"""
+        script_dir = os.path.dirname(os.path.abspath(__file__))
         possible_paths = [
-            'yolov3.onnx',
-            'yolov4.onnx',
             'yolov3-tiny.onnx',
             'yolov4-tiny.onnx',
-            'models/yolov3.onnx',
-            'models/yolov4.onnx',
-            '/usr/local/share/yolov3.onnx',
-            '/usr/share/yolo/yolov3.onnx',
+            'yolov5s.onnx',
+            'yolov3.onnx',
+            'yolov4.onnx',
+            'models/yolov3-tiny.onnx',
+            'models/yolov4-tiny.onnx',
+            'models/yolov5s.onnx',
+            os.path.join(script_dir, 'yolov3-tiny.onnx'),
+            os.path.join(script_dir, 'yolov4-tiny.onnx'),
+            os.path.join(script_dir, 'yolov5s.onnx'),
+            os.path.join(script_dir, 'models', 'yolov3-tiny.onnx'),
+            os.path.join(script_dir, 'models', 'yolov4-tiny.onnx'),
+            os.path.join(script_dir, 'models', 'yolov5s.onnx'),
         ]
-
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        possible_paths.extend([
-            os.path.join(script_dir, 'yolov3.onnx'),
-            os.path.join(script_dir, 'models', 'yolov3.onnx'),
-        ])
 
         for path in possible_paths:
             if os.path.exists(path):
                 return path
         return None
 
-    def _setup_backend(self):
-        """设置推理后端"""
+    def _load_model(self, model_path):
+        """加载模型"""
+        # 尝试使用 ONNX Runtime
         try:
-            # 尝试使用 CUDA (需要 OpenCV 编译时支持)
-            self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-            self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
-            print("[INFO] 使用 CUDA 加速")
-        except:
-            try:
-                # 尝试使用 OpenVINO (Intel)
-                self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_INFERENCE_ENGINE)
-                self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_MYRIAD)
-                print("[INFO] 使用 Intel Neural Compute Stick 加速")
-            except:
-                # 回退到 CPU
-                self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-                self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-                print("[INFO] 使用 CPU 推理")
+            import onnxruntime as ort
+            print("[INFO] 使用 ONNX Runtime")
+            self.session = ort.InferenceSession(
+                model_path,
+                providers=['CPUExecutionProvider']
+            )
+            self.using_onnx_runtime = True
 
-    def _get_output_layers(self):
-        """获取输出层名称"""
+            # 获取输入输出名称
+            self.input_name = self.session.get_inputs()[0].name
+            self.output_name = self.session.get_outputs()[0].name
+            print(f"[INFO] 输入: {self.input_name}, 输出: {self.output_name}")
+            return
+
+        except ImportError:
+            print("[WARN] ONNX Runtime 未安装，尝试 OpenCV DNN")
+        except Exception as e:
+            print(f"[WARN] ONNX Runtime 加载失败: {e}，尝试 OpenCV DNN")
+
+        # 回退到 OpenCV DNN
         try:
+            print("[INFO] 使用 OpenCV DNN")
+            self.net = cv2.dnn.readNet(model_path)
+            self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+            self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+
+            # 获取输出层
             layer_names = self.net.getLayerNames()
             out_layers_idx = self.net.getUnconnectedOutLayers()
             self.output_layers = [layer_names[i[0] - 1] for i in out_layers_idx]
             print(f"[INFO] 输出层: {self.output_layers}")
+        except Exception as e:
+            print(f"[ERROR] OpenCV DNN 也加载失败: {e}")
+            self.net = None
+
+    def detect(self, frame):
+        """执行目标检测"""
+        if self.session:
+            return self._detect_onnx_runtime(frame)
+        elif self.net:
+            return self._detect_opencv_dnn(frame)
+        else:
+            return self.detect_color(frame)
+
+    def _detect_onnx_runtime(self, frame):
+        """使用 ONNX Runtime 检测"""
+        # 预处理
+        blob = cv2.dnn.blobFromImage(
+            frame,
+            1/255.0,
+            self.input_size,
+            (0, 0, 0),
+            swapRB=True,
+            crop=False
+        )
+
+        # 推理
+        outs = self.session.run(
+            [self.output_name],
+            {self.input_name: blob}
+        )
+
+        return self._post_process_yolov5(outs[0], frame.shape)
+
+    def _detect_opencv_dnn(self, frame):
+        """使用 OpenCV DNN 检测"""
+        blob = cv2.dnn.blobFromImage(
+            frame,
+            1/255.0,
+            self.input_size,
+            (0, 0, 0),
+            swapRB=True,
+            crop=False
+        )
+
+        self.net.setInput(blob)
+        outs = self.net.forward(self.output_layers)
+
+        return self._post_process_yolov3(outs, frame.shape)
+
+    def _post_process_yolov5(self, outputs, image_shape):
+        """后处理 YOLOv5 格式输出 (1, 25200, 85)"""
+        height, width = image_shape[:2]
+        detections = []
+
+        # YOLOv5 输出格式: [batch, 25200, 85] 其中85 = 4(box) + 1(conf) + 80(classes)
+        if len(outputs.shape) == 3:
+            outputs = outputs[0]  # 去掉batch维度
+
+        # 遍历所有检测框
+        for detection in outputs:
+            if len(detection) < 85:
+                continue
+
+            # 解析: x, y, w, h, obj_conf, class1_conf, class2_conf, ...
+            x, y, w, h = detection[0:4]
+            obj_conf = detection[4]
+
+            # 获取类别置信度
+            class_scores = detection[5:]
+            class_id = np.argmax(class_scores)
+            class_conf = class_scores[class_id]
+
+            # 最终置信度
+            confidence = obj_conf * class_conf
+
+            if confidence < self.conf_threshold:
+                continue
+
+            # 转换为边界框坐标
+            x1 = int((x - w/2) * width)
+            y1 = int((y - h/2) * height)
+            x2 = int((x + w/2) * width)
+            y2 = int((y + h/2) * height)
+
+            class_name = self.CLASSES[class_id] if class_id < len(self.CLASSES) else f'class_{class_id}'
+
+            detections.append({
+                'class': class_name,
+                'confidence': float(confidence),
+                'bbox': (x1, y1, x2, y2)
+            })
+
+        # NMS
+        return self._apply_nms(detections)
+
+    def _post_process_yolov3(self, outputs, image_shape):
+        """后处理 YOLOv3/v4 格式输出"""
+        height, width = image_shape[:2]
+        class_ids = []
+        confidences = []
+        boxes = []
+
+        for out in outputs:
+            for detection in out:
+                if len(detection) < 85:
+                    continue
+
+                scores = detection[5:]
+                class_id = np.argmax(scores)
+                confidence = scores[class_id]
+
+                if confidence < self.conf_threshold:
+                    continue
+
+                center_x = int(detection[0] * width)
+                center_y = int(detection[1] * height)
+                w = int(detection[2] * width)
+                h = int(detection[3] * height)
+
+                x = int(center_x - w / 2)
+                y = int(center_y - h / 2)
+
+                class_name = self.CLASSES[class_id] if class_id < len(self.CLASSES) else f'class_{class_id}'
+
+                class_ids.append(class_name)
+                confidences.append(float(confidence))
+                boxes.append((x, y, x + w, y + h))
+
+        indices = self._apply_nms(list(zip(class_ids, confidences, boxes)))
+        detections = []
+        for i in indices:
+            if isinstance(i, (list, tuple, np.ndarray)):
+                i = i[0]
+            detections.append({
+                'class': class_ids[i],
+                'confidence': confidences[i],
+                'bbox': boxes[i]
+            })
+
+        return detections
+
+    def _apply_nms(self, detections):
+        """应用 NMS"""
+        if not detections:
+            return []
+
+        boxes = [d['bbox'] for d in detections]
+        scores = [d['confidence'] for d in detections]
+
+        try:
+            indices = cv2.dnn.NMSBoxes(boxes, scores, self.conf_threshold, self.nms_threshold)
+            if isinstance(indices, np.ndarray):
+                indices = indices.flatten()
+            return [detections[i] for i in indices]
         except:
-            self.output_layers = None
+            return detections
 
     def detect_color(self, frame):
-        """
-        颜色检测备选方案（当 YOLO 模型不可用时）
-        检测红色、蓝色、绿色的物体
-        """
+        """颜色检测备选方案"""
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-        # 定义颜色范围
         colors = {
             'Red': ([0, 100, 100], [10, 255, 255]),
             'Blue': ([100, 100, 100], [130, 255, 255]),
@@ -264,7 +407,7 @@ class YOLODetector:
 
             for cnt in contours:
                 area = cv2.contourArea(cnt)
-                if area > 1000:  # 过滤小区域
+                if area > 1000:
                     x, y, w, h = cv2.boundingRect(cnt)
                     detections.append({
                         'class': color_name,
@@ -274,137 +417,37 @@ class YOLODetector:
 
         return detections
 
-    def detect(self, frame):
-        """
-        执行目标检测
-
-        Args:
-            frame: 输入图像 (BGR格式)
-
-        Returns:
-            detections: 检测结果列表，每个元素包含 class, confidence, bbox
-        """
-        if self.net is None:
-            return self.detect_color(frame)
-
-        blob = cv2.dnn.blobFromImage(
-            frame,
-            1/255.0,
-            self.input_size,
-            (0, 0, 0),
-            swapRB=True,
-            crop=False
-        )
-
-        self.net.setInput(blob)
-
-        if self.output_layers:
-            outs = self.net.forward(self.output_layers)
-        else:
-            outs = self.net.forward()
-
-        return self._post_process(outs, frame.shape)
-
-    def _post_process(self, outs, image_shape):
-        """后处理网络输出"""
-        height, width = image_shape[:2]
-        class_ids = []
-        confidences = []
-        boxes = []
-
-        for out in outs:
-            for detection in out:
-                if len(detection) < 5:
-                    continue
-
-                scores = detection[5:]
-                class_id = np.argmax(scores)
-                confidence = scores[class_id]
-
-                if confidence < self.conf_threshold:
-                    continue
-
-                # 解析边界框
-                center_x = int(detection[0] * width)
-                center_y = int(detection[1] * height)
-                w = int(detection[2] * width)
-                h = int(detection[3] * height)
-
-                x = int(center_x - w / 2)
-                y = int(center_y - h / 2)
-
-                class_name = self.CLASSES[class_id] if class_id < len(self.CLASSES) else f'class_{class_id}'
-
-                # 类别过滤
-                if self.FILTER_CLASSES and class_name not in self.FILTER_CLASSES:
-                    continue
-
-                class_ids.append(class_name)
-                confidences.append(float(confidence))
-                boxes.append((x, y, x + w, y + h))
-
-        # NMS 非极大值抑制
-        indices = []
-        if boxes:
-            indices = cv2.dnn.NMSBoxes(boxes, confidences, self.conf_threshold, self.nms_threshold)
-
-        detections = []
-        try:
-            for i in indices:
-                if isinstance(i, (list, tuple, np.ndarray)):
-                    i = i[0]
-                detections.append({
-                    'class': class_ids[i],
-                    'confidence': confidences[i],
-                    'bbox': boxes[i]
-                })
-        except:
-            pass
-
-        return detections
-
     def draw_detection(self, frame, detection):
-        """在图像上绘制单个检测结果"""
+        """绘制检测结果"""
         x1, y1, x2, y2 = detection['bbox']
         class_name = detection['class']
         confidence = detection['confidence']
 
-        # 颜色映射
         color_map = {
-            'person': (255, 0, 0),      # 蓝色
-            'car': (0, 255, 255),       # 黄色
-            'motorcycle': (0, 255, 0),  # 绿色
-            'bicycle': (255, 255, 0),   # 青色
-            'dog': (128, 0, 255),       # 紫色
-            'cat': (0, 128, 255),       # 橙色
+            'person': (255, 0, 0),
+            'car': (0, 255, 255),
+            'motorcycle': (0, 255, 0),
+            'bicycle': (255, 255, 0),
+            'dog': (128, 0, 255),
+            'cat': (0, 128, 255),
         }
         color = color_map.get(class_name, (0, 255, 255))
 
-        # 绘制边界框
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
 
-        # 绘制标签背景
         label = f'{class_name} {confidence:.2f}'
         label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         cv2.rectangle(frame, (x1, y1 - label_size[1] - 4), (x1 + label_size[0], y1), color, -1)
-
-        # 绘制标签文字
         cv2.putText(frame, label, (x1, y1 - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
         return frame
 
 
 def main():
-    # 参数解析
     ip = "192.168.5.1"
     port = 81
     model_path = None
-    conf_threshold = 0.5
-    nms_threshold = 0.4
-    show_fps = True
-    filter_classes = []
 
-    # 命令行参数
     if len(sys.argv) > 1:
         ip = sys.argv[1]
     if len(sys.argv) > 2:
@@ -416,29 +459,16 @@ def main():
     print("ESP32-CAM + YOLO 目标检测")
     print("=" * 50)
     print(f"视频流: http://{ip}:{port}/stream")
-    print(f"模型: {model_path or '未指定 (将使用颜色检测)'}")
-    print("=" * 50)
-    print("按键说明:")
-    print("  q - 退出程序")
-    print("  s - 截图")
-    print("  f - 切换 FPS 显示")
-    print("  d - 切换调试信息")
+    print(f"模型: {model_path or '未指定'}")
     print("=" * 50)
 
-    # 初始化检测器
-    detector = YOLODetector(
-        model_path=model_path,
-        conf_threshold=conf_threshold,
-        nms_threshold=nms_threshold
-    )
+    detector = YOLODetector(model_path=model_path)
 
-    # 初始化视频捕获
     cap = MJPEGCapture(ip, port)
 
     try:
         cap.start()
 
-        # 等待视频流连接
         print("[INFO] 等待视频流...")
         for i in range(50):
             frame = cap.read()
@@ -451,72 +481,57 @@ def main():
             cap.stop()
             return
 
-        # 创建窗口
         window_name = "ESP32-CAM YOLO (按 q 退出)"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(window_name, 800, 600)
 
-        # 统计信息
         frame_count = 0
         fps = 0
         last_time = time.time()
-        debug_mode = False
+        show_fps = True
 
-        # 主循环
         while cap.is_running():
             frame = cap.read()
 
             if frame is not None:
                 frame_count += 1
 
-                # YOLO 检测
                 detections = detector.detect(frame)
 
-                # 绘制检测结果
                 for det in detections:
                     frame = detector.draw_detection(frame, det)
 
-                # 计算 FPS
                 current_time = time.time()
                 if current_time - last_time >= 1.0:
                     fps = frame_count
                     frame_count = 0
                     last_time = current_time
 
-                # 显示 FPS 和检测数量
                 if show_fps:
                     info_text = f"FPS: {fps} | 检测: {len(detections)}"
                     cv2.putText(frame, info_text, (10, 30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-                # 调试信息
-                if debug_mode:
-                    cv2.putText(frame, f"帧: {cap.frame_count}", (10, 60),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-                    if detector.net:
-                        cv2.putText(frame, "YOLO: 已加载", (10, 85),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                    # 显示当前检测模式
+                    if detector.session:
+                        mode_text = "ONNX Runtime"
+                    elif detector.net:
+                        mode_text = "OpenCV DNN"
                     else:
-                        cv2.putText(frame, "YOLO: 颜色检测", (10, 85),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                        mode_text = "颜色检测"
+                    cv2.putText(frame, mode_text, (10, 60),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
 
-                # 显示图像
                 cv2.imshow(window_name, frame)
 
-            # 按键处理
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 break
             elif key == ord('s') and frame is not None:
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                save_dir = os.path.dirname(os.path.abspath(__file__)) or "."
-                path = f"{save_dir}/yolo_screenshot_{ts}.jpg"
+                path = f"screenshot_{ts}.jpg"
                 cv2.imwrite(path, frame)
                 print(f"[INFO] 截图已保存: {path}")
-            elif key == ord('f'):
-                show_fps = not show_fps
-            elif key == ord('d'):
-                debug_mode = not debug_mode
 
     finally:
         cap.stop()
