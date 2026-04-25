@@ -1,496 +1,440 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-机械手控制界面
-功能：串口控制机械手张开/闭合，实时显示超声波距离
+机械手控制界面 - 黄金比例配色 + 卡片式布局
 """
 
 import serial
 import serial.tools.list_ports
 import threading
 import time
+import math
 from tkinter import *
 from tkinter import ttk, messagebox
 
 
+# ================= 黄金比例配色方案 =================
+# 主色调 60% | 辅助色 30% | 点缀色 10%
+COLORS = {
+    "bg_main": "#1a1a2e",       # 主色调 - 深蓝
+    "bg_card": "#242442",       # 卡片背景
+    "accent": "#0066cc",        # 辅助色 - 蓝色
+    "accent_light": "#3a8ad6",  # 浅辅助色
+    "neon": "#00d9ff",         # 点缀色 - 霓虹蓝
+    "neon_green": "#00ff88",   # 点缀色 - 霓虹绿
+    "neon_orange": "#ff8800",   # 点缀色 - 橙色
+    "text": "#e0e0e0",         # 文字色
+    "text_dim": "#8899aa",     # 次要文字
+    "shadow": "#0a0a1e",       # 阴影色（非纯黑）
+    "danger": "#cc3355",        # 危险色
+}
+
+
+class GaugeCard(Canvas):
+    """仪表盘卡片"""
+
+    def __init__(self, parent, title, unit="mm", **kwargs):
+        super().__init__(parent, **kwargs)
+        self.title = title
+        self.unit = unit
+        self.value = 0
+        self.max_value = 500
+
+    def set_value(self, val):
+        self.value = min(max(val, 0), self.max_value)
+        self._draw()
+
+    def _draw(self):
+        self.delete("all")
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 40 or h < 40:
+            return
+
+        cx, cy, r = w / 2, h / 2 - 10, min(w, h) / 2 - 25
+
+        # 背景圆弧
+        self.create_arc(cx - r, cy - r, cx + r, cy + r,
+                        start=135, extent=270, style=ARC,
+                        outline=COLORS["shadow"], width=14)
+
+        # 数值圆弧
+        ratio = self.value / self.max_value
+        ext = int(ratio * 270)
+        if ext > 0:
+            if self.value < 80:
+                color = COLORS["neon_green"]
+            elif self.value < 200:
+                color = COLORS["neon"]
+            else:
+                color = COLORS["neon_orange"]
+            self.create_arc(cx - r, cy - r, cx + r, cy + r,
+                            start=135, extent=ext, style=ARC,
+                            outline=color, width=12)
+
+        # 中心数值
+        self.create_text(cx, cy - 8, text=f"{self.value}",
+                        fill=COLORS["neon"], font=("Arial", 22, "bold"))
+        self.create_text(cx, cy + 18, text=self.unit,
+                        fill=COLORS["text_dim"], font=("Arial", 9))
+
+        # 刻度
+        for i in range(5):
+            angle = math.radians(135 + i * 67.5)
+            x1 = cx + (r - 18) * math.cos(angle)
+            y1 = cy + (r - 18) * math.sin(angle)
+            x2 = cx + (r - 6) * math.cos(angle)
+            y2 = cy + (r - 6) * math.sin(angle)
+            self.create_line(x1, y1, x2, y2, fill=COLORS["accent"], width=2)
+
+
+class TiltCard(Canvas):
+    """云台倾斜卡片"""
+
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.angle = 0
+
+    def set_angle(self, val):
+        self.angle = val
+        self._draw()
+
+    def _draw(self):
+        self.delete("all")
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 40 or h < 40:
+            return
+
+        cx, cy, r = w / 2, h / 2 - 10, min(w, h) / 2 - 25
+
+        # 背景圆
+        self.create_oval(cx - r, cy - r, cx + r, cy + r,
+                        outline=COLORS["shadow"], width=4)
+
+        # 中心点
+        self.create_oval(cx - 5, cy - 5, cx + 5, cy + 5,
+                        fill=COLORS["accent"])
+
+        # 指针
+        rad = math.radians(90 - self.angle * 2)
+        px = cx + (r - 20) * math.cos(rad)
+        py = cy - (r - 20) * math.sin(rad)
+
+        color = COLORS["neon_green"] if abs(self.angle) < 10 else COLORS["neon_orange"]
+        self.create_line(cx, cy, px, py, fill=color, width=3)
+        self.create_oval(px - 7, py - 7, px + 7, py + 7, fill=color)
+
+        # 角度值
+        self.create_text(cx, cy + r + 15, text=f"{self.angle:.1f}°",
+                        fill=COLORS["neon"], font=("Arial", 12, "bold"))
+
+
+class CollapsibleSection(Frame):
+    """可折叠区域"""
+
+    def __init__(self, parent, title, default_open=False, **kwargs):
+        super().__init__(parent, bg=COLORS["bg_card"], **kwargs)
+
+        self.title = title
+        self.is_open = default_open
+
+        # 标题栏（可点击）
+        self.header = Frame(self, bg=COLORS["accent"])
+        self.header.pack(fill=X)
+
+        self.header_label = Label(self.header,
+                                 text=f"{'▼' if default_open else '▶'} {title}",
+                                 font=("微软雅黑", 11, "bold"),
+                                 fg="white", bg=COLORS["accent"], anchor=W,
+                                 cursor="hand2")
+        self.header_label.pack(side=LEFT, padx=15, pady=8)
+        self.header_label.bind("<Button-1>", self._on_header_click)
+
+        # 内容区
+        self.content = Frame(self, bg=COLORS["bg_card"])
+        if default_open:
+            self.content.pack(fill=X, padx=10, pady=(0, 10))
+
+    def _on_header_click(self, _event=None):
+        """处理标题栏点击"""
+        self.is_open = not self.is_open
+        if self.is_open:
+            self.content.pack(fill=X, padx=10, pady=(0, 10))
+            self.header_label.config(text=f"▼ {self.title}")
+        else:
+            self.content.pack_forget()
+            self.header_label.config(text=f"▶ {self.title}")
+
+    def toggle(self):
+        """手动切换（兼容外部调用）"""
+        self._on_header_click()
+
+    def get_content(self):
+        return self.content
+
+
 class UhandControlGUI:
-    """机械手控制界面主类"""
+    """机械手控制界面"""
 
     def __init__(self):
         self.root = Tk()
-        self.root.title("机械手控制界面")
-        self.root.geometry("400x550")
-        self.root.resizable(True, True)
-        self.root.configure(bg="#f5f5f5")
+        self.root.title("uHand 智能机械手")
+        self.root.geometry("800x650")
+        self.root.configure(bg=COLORS["bg_main"])
 
         self.serial_port = None
         self.is_connected = False
         self.is_receiving = False
         self.receive_thread = None
 
-        # 传感器数据
         self.distance = 0
-        self.mode = "未知"
-        self.is_auto_mode = True  # 默认自动模式
+        self.angle = 0
+        self.is_auto_mode = True
 
         self._setup_ui()
 
     def _setup_ui(self):
         """构建界面"""
 
-        # ============== 顶部标题 ==============
-        title_frame = Frame(self.root, bg="#3498db", height=60)
-        title_frame.pack(fill=X)
-        title_frame.pack_propagate(False)
+        # ============== 标题栏 ==============
+        header = Frame(self.root, bg=COLORS["accent"], height=45)
+        header.pack(fill=X)
+        header.pack_propagate(False)
 
-        Label(
-            title_frame,
-            text="机械手控制中心",
-            font=("微软雅黑", 20, "bold"),
-            fg="white",
-            bg="#3498db"
-        ).pack(pady=15)
+        Label(header, text="uHand 智能机械手控制中心",
+              font=("微软雅黑", 16, "bold"), fg="white",
+              bg=COLORS["accent"]).pack(side=LEFT, padx=20, pady=8)
 
-        # ============== 数据显示区 ==============
-        data_frame = LabelFrame(
-            self.root,
-            text="实时传感器数据",
-            font=("微软雅黑", 12, "bold"),
-            padx=15,
-            pady=15,
-            bg="#f5f5f5"
-        )
-        data_frame.pack(fill=X, padx=20, pady=(20, 10))
+        self.status_led = Label(header, text="●", font=("Arial", 16),
+                              fg=COLORS["danger"], bg=COLORS["accent"])
+        self.status_led.pack(side=RIGHT, padx=20)
 
-        # 超声波距离
-        distance_box = Frame(data_frame, bg="#ecf0f1", relief=RIDGE, bd=2, width=150, height=80)
-        distance_box.pack(pady=5)
-        distance_box.pack_propagate(False)
+        # ============== 主内容区 ==============
+        main = Frame(self.root, bg=COLORS["bg_main"])
+        main.pack(fill=BOTH, expand=True, padx=20, pady=15)
 
-        Label(
-            distance_box,
-            text="超声波距离",
-            font=("微软雅黑", 10),
-            bg="#ecf0f1",
-            fg="#7f8c8d"
-        ).pack(pady=(10, 2))
+        # -------- 第一行：仪表盘（60%宽度）--------
+        gauge_row = Frame(main, bg=COLORS["bg_main"])
+        gauge_row.pack(fill=X, pady=(0, 15))
 
-        self.distance_var = StringVar(value="-- mm")
-        Label(
-            distance_box,
-            textvariable=self.distance_var,
-            font=("微软雅黑", 28, "bold"),
-            bg="#ecf0f1",
-            fg="#2980b9"
-        ).pack(pady=(0, 10))
+        # 超声波仪表
+        gauge_card = Frame(gauge_row, bg=COLORS["bg_card"], bd=0)
+        gauge_card.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 10))
 
-        # 控制模式
-        mode_box = Frame(data_frame, bg="#ecf0f1", relief=RIDGE, bd=2, width=150, height=80)
-        mode_box.pack(pady=5)
-        mode_box.pack_propagate(False)
+        Label(gauge_card, text="超声波距离",
+              font=("微软雅黑", 11, "bold"),
+              fg=COLORS["neon"], bg=COLORS["bg_card"]).pack(pady=(12, 5))
 
-        Label(
-            mode_box,
-            text="控制模式",
-            font=("微软雅黑", 10),
-            bg="#ecf0f1",
-            fg="#7f8c8d"
-        ).pack(pady=(10, 2))
+        self.gauge = GaugeCard(gauge_card, "超声波", unit="mm",
+                              width=220, height=170, bg=COLORS["bg_card"])
+        self.gauge.pack(pady=5)
 
-        self.mode_var = StringVar(value="未知")
-        self.mode_label = Label(
-            mode_box,
-            textvariable=self.mode_var,
-            font=("微软雅黑", 20, "bold"),
-            bg="#ecf0f1",
-            fg="#27ae60"
-        )
-        self.mode_label.pack(pady=(0, 10))
+        # 云台仪表
+        tilt_card = Frame(gauge_row, bg=COLORS["bg_card"], bd=0)
+        tilt_card.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 10))
 
-        # ============== 串口连接区 ==============
-        conn_frame = LabelFrame(
-            self.root,
-            text="串口连接",
-            font=("微软雅黑", 12, "bold"),
-            padx=15,
-            pady=10,
-            bg="#f5f5f5"
-        )
-        conn_frame.pack(fill=X, padx=20, pady=10)
+        Label(tilt_card, text="云台角度",
+              font=("微软雅黑", 11, "bold"),
+              fg=COLORS["neon"], bg=COLORS["bg_card"]).pack(pady=(12, 5))
 
-        conn_inner = Frame(conn_frame, bg="#f5f5f5")
-        conn_inner.pack()
+        self.tilt = TiltCard(tilt_card, width=200, height=170, bg=COLORS["bg_card"])
+        self.tilt.pack(pady=5)
 
-        Label(conn_inner, text="串口:", font=("微软雅黑", 10), bg="#f5f5f5").pack(side=LEFT, padx=(0, 5))
+        # 状态卡片
+        status_card = Frame(gauge_row, bg=COLORS["bg_card"], bd=0)
+        status_card.pack(side=LEFT, fill=Y, padx=(0, 10))
 
-        self.port_var = StringVar()
-        self.port_combo = ttk.Combobox(conn_inner, textvariable=self.port_var, width=12, state="readonly")
-        self.port_combo.pack(side=LEFT, padx=(0, 10))
+        Label(status_card, text="连接状态",
+              font=("微软雅黑", 11, "bold"),
+              fg=COLORS["neon"], bg=COLORS["bg_card"]).pack(pady=(12, 5))
+
+        status_inner = Frame(status_card, bg=COLORS["bg_card"])
+        status_inner.pack(padx=15, pady=5)
+
+        self.conn_label = Label(status_inner, text="未连接",
+                              font=("微软雅黑", 12, "bold"),
+                              fg=COLORS["danger"], bg=COLORS["bg_card"],
+                              anchor=W, width=12)
+        self.conn_label.pack(pady=3)
+
+        self.mode_label = Label(status_inner, text="模式: 自动",
+                              font=("微软雅黑", 11),
+                              fg=COLORS["text_dim"], bg=COLORS["bg_card"],
+                              anchor=W, width=12)
+        self.mode_label.pack(pady=3)
+
+        self.status_label = Label(status_inner, text="状态: 就绪",
+                              font=("微软雅黑", 10),
+                              fg=COLORS["text_dim"], bg=COLORS["bg_card"],
+                              anchor=W, width=12)
+        self.status_label.pack(pady=3)
+
+        # 连接控制
+        conn_ctrl = Frame(status_card, bg=COLORS["bg_card"])
+        conn_ctrl.pack(pady=10, padx=15)
+
+        self.port_combo = ttk.Combobox(conn_ctrl, width=10, state="readonly")
+        self.port_combo.pack(side=LEFT, padx=(0, 5))
         self._refresh_ports()
 
-        Button(
-            conn_inner,
-            text="刷新",
-            command=self._refresh_ports,
-            width=6,
-            bg="#95a5a6",
-            fg="white"
-        ).pack(side=LEFT, padx=2)
+        Button(conn_ctrl, text="连接", command=self._connect,
+               width=5, bg="#006633", fg="white",
+               relief=FLAT, cursor="hand2").pack(side=LEFT, padx=2)
+        Button(conn_ctrl, text="断开", command=self._disconnect,
+               width=5, bg="#660033", fg="white",
+               relief=FLAT, cursor="hand2").pack(side=LEFT, padx=2)
+        Button(conn_ctrl, text="刷新", command=self._refresh_ports,
+               width=5, bg="#333355", fg="white",
+               relief=FLAT, cursor="hand2").pack(side=LEFT, padx=2)
 
-        Button(
-            conn_inner,
-            text="连接",
-            command=self._connect,
-            width=6,
-            bg="#27ae60",
-            fg="white"
-        ).pack(side=LEFT, padx=2)
+        # -------- 第二行：控制面板（下拉菜单）--------
+        control_card = Frame(main, bg=COLORS["bg_card"], bd=0)
+        control_card.pack(fill=X)
 
-        Button(
-            conn_inner,
-            text="断开",
-            command=self._disconnect,
-            width=6,
-            bg="#e74c3c",
-            fg="white"
-        ).pack(side=LEFT, padx=2)
+        Label(control_card, text="控制面板",
+              font=("微软雅黑", 11, "bold"),
+              fg=COLORS["neon"], bg=COLORS["bg_card"]).pack(anchor=W, padx=15, pady=(12, 5))
 
-        self.status_label = Label(
-            conn_inner,
-            text="未连接",
-            fg="#e74c3c",
-            font=("微软雅黑", 10, "bold"),
-            bg="#f5f5f5"
-        )
-        self.status_label.pack(side=LEFT, padx=10)
+        # 模式切换区域（默认展开）
+        mode_section = CollapsibleSection(control_card, "模式切换", default_open=True)
+        mode_section.pack(fill=X, padx=15, pady=(0, 10))
+        mode_content = mode_section.get_content()
 
-        # ============== 模式切换区 ==============
-        mode_switch_frame = LabelFrame(
-            self.root,
-            text="控制模式切换",
-            font=("微软雅黑", 12, "bold"),
-            padx=15,
-            pady=10,
-            bg="#f5f5f5"
-        )
-        mode_switch_frame.pack(fill=X, padx=20, pady=10)
+        mode_inner = Frame(mode_content, bg=COLORS["bg_card"])
+        mode_inner.pack(pady=5)
 
-        # 自动/手动模式切换说明
-        mode_note = Label(
-            mode_switch_frame,
-            text="提示：默认自动模式，手动模式需要切换",
-            font=("微软雅黑", 9),
-            bg="#f5f5f5",
-            fg="#7f8c8d"
-        )
-        mode_note.pack(pady=(0, 5))
+        btn_style = {
+            "font": ("微软雅黑", 11, "bold"),
+            "width": 12, "height": 2,
+            "relief": RAISED, "bd": 2,
+            "cursor": "hand2"
+        }
 
-        mode_btn_inner = Frame(mode_switch_frame, bg="#f5f5f5")
-        mode_btn_inner.pack()
-
-        # 切换到自动模式按钮
-        self.auto_btn = Button(
-            mode_btn_inner,
-            text="自动模式",
-            command=self._set_auto_mode,
-            width=10,
-            height=2,
-            font=("微软雅黑", 11, "bold"),
-            bg="#3498db",
-            fg="white",
-            activebackground="#2980b9",
-            activeforeground="white",
-            relief=RAISED,
-            bd=3
-        )
+        self.auto_btn = Button(mode_inner, text="自动模式",
+                             bg=COLORS["accent"], fg="white",
+                             activebackground=COLORS["accent_light"], **btn_style,
+                             command=self._set_auto_mode)
         self.auto_btn.pack(side=LEFT, padx=5)
 
-        # 切换到手动模式按钮
-        self.manual_btn = Button(
-            mode_btn_inner,
-            text="手动模式",
-            command=self._set_manual_mode,
-            width=10,
-            height=2,
-            font=("微软雅黑", 11, "bold"),
-            bg="#9b59b6",
-            fg="white",
-            activebackground="#8e44ad",
-            activeforeground="white",
-            relief=RAISED,
-            bd=3
-        )
+        self.manual_btn = Button(mode_inner, text="手动模式",
+                              bg=COLORS["shadow"], fg=COLORS["neon"],
+                              activebackground=COLORS["accent"], **btn_style,
+                              command=self._set_manual_mode)
         self.manual_btn.pack(side=LEFT, padx=5)
 
-        # 当前模式状态指示
-        self.mode_indicator = Label(
-            mode_switch_frame,
-            text="当前: 自动模式",
-            font=("微软雅黑", 10, "bold"),
-            bg="#f5f5f5",
-            fg="#3498db"
-        )
-        self.mode_indicator.pack(pady=(5, 0))
+        # 快速动作区域（默认展开便于测试）
+        action_section = CollapsibleSection(control_card, "快速动作", default_open=True)
+        action_section.pack(fill=X, padx=15, pady=(0, 10))
+        action_content = action_section.get_content()
 
-        # ============== 手掌控制区（手动模式） ==============
-        gripper_frame = LabelFrame(
-            self.root,
-            text="手掌控制（手动模式）",
-            font=("微软雅黑", 12, "bold"),
-            padx=20,
-            pady=15,
-            bg="#f5f5f5"
-        )
-        gripper_frame.pack(fill=X, padx=20, pady=10)
+        action_inner = Frame(action_content, bg=COLORS["bg_card"])
+        action_inner.pack(pady=5)
 
-        gripper_inner = Frame(gripper_frame, bg="#f5f5f5")
-        gripper_inner.pack()
+        actions = [
+            ("张开", "O", "#00aa55"),
+            ("闭合", "C", "#cc3355"),
+            ("握手", "H", "#0066aa"),
+            ("捏取", "P", "#6600aa"),
+            ("全握", "G", "#aa6600"),
+            ("指向", "F", "#008866"),
+            ("放松", "R", "#666666"),
+        ]
 
-        # 张开按钮
-        self.open_btn = Button(
-            gripper_inner,
-            text="张开(O)",
-            command=self._gripper_open,
-            width=8,
-            height=2,
-            font=("微软雅黑", 12, "bold"),
-            bg="#2ecc71",
-            fg="white",
-            activebackground="#27ae60",
-            activeforeground="white",
-            relief=RAISED,
-            bd=3,
-            state=DISABLED
-        )
-        self.open_btn.pack(side=LEFT, padx=5, pady=3)
+        self.action_btns = []
+        for i, (text, cmd, color) in enumerate(actions):
+            btn = Button(action_inner, text=f"{text}",
+                       command=lambda c=cmd, t=text: self._send_action(c, t),
+                       width=8, height=1, font=("微软雅黑", 9),
+                       bg=color, fg="white", relief=RAISED, bd=2,
+                       state=DISABLED, cursor="hand2")
+            btn.grid(row=0, column=i, padx=3, pady=3)
+            self.action_btns.append(btn)
 
-        # 闭合按钮
-        self.close_btn = Button(
-            gripper_inner,
-            text="闭合(C)",
-            command=self._gripper_close,
-            width=8,
-            height=2,
-            font=("微软雅黑", 12, "bold"),
-            bg="#e74c3c",
-            fg="white",
-            activebackground="#c0392b",
-            activeforeground="white",
-            relief=RAISED,
-            bd=3,
-            state=DISABLED
-        )
-        self.close_btn.pack(side=LEFT, padx=5, pady=3)
+        # -------- 日志区 --------
+        log_card = Frame(main, bg=COLORS["bg_card"], bd=0)
+        log_card.pack(fill=BOTH, expand=True, pady=(15, 0))
 
-        # 握手按钮
-        self.handshake_btn = Button(
-            gripper_inner,
-            text="握手(H)",
-            command=self._gripper_handshake,
-            width=8,
-            height=2,
-            font=("微软雅黑", 12, "bold"),
-            bg="#3498db",
-            fg="white",
-            activebackground="#2980b9",
-            activeforeground="white",
-            relief=RAISED,
-            bd=3,
-            state=DISABLED
-        )
-        self.handshake_btn.pack(side=LEFT, padx=5, pady=3)
+        Label(log_card, text="通信日志",
+              font=("微软雅黑", 10, "bold"),
+              fg=COLORS["text_dim"], bg=COLORS["bg_card"]).pack(anchor=W, padx=15, pady=(10, 5))
 
-        # 捏取按钮
-        self.pinch_btn = Button(
-            gripper_inner,
-            text="捏取(P)",
-            command=self._gripper_pinch,
-            width=8,
-            height=2,
-            font=("微软雅黑", 12, "bold"),
-            bg="#9b59b6",
-            fg="white",
-            activebackground="#8e44ad",
-            activeforeground="white",
-            relief=RAISED,
-            bd=3,
-            state=DISABLED
-        )
-        self.pinch_btn.pack(side=LEFT, padx=5, pady=3)
+        log_frame = Frame(log_card, bg="#0a0a1e")
+        log_frame.pack(fill=BOTH, expand=True, padx=15, pady=(0, 10))
 
-        # 全握按钮
-        self.grip_btn = Button(
-            gripper_inner,
-            text="全握(G)",
-            command=self._gripper_grip,
-            width=8,
-            height=2,
-            font=("微软雅黑", 12, "bold"),
-            bg="#e67e22",
-            fg="white",
-            activebackground="#d35400",
-            activeforeground="white",
-            relief=RAISED,
-            bd=3,
-            state=DISABLED
-        )
-        self.grip_btn.pack(side=LEFT, padx=5, pady=3)
+        self.log_text = Text(log_frame, height=4, bg="#0a0a1e",
+                           fg=COLORS["neon_green"], font=("Consolas", 9),
+                           relief=FLAT, bd=0)
+        self.log_text.pack(fill=BOTH, expand=True)
 
-        # 指向按钮
-        self.point_btn = Button(
-            gripper_inner,
-            text="指向(F)",
-            command=self._gripper_point,
-            width=8,
-            height=2,
-            font=("微软雅黑", 12, "bold"),
-            bg="#1abc9c",
-            fg="white",
-            activebackground="#16a085",
-            activeforeground="white",
-            relief=RAISED,
-            bd=3,
-            state=DISABLED
-        )
-        self.point_btn.pack(side=LEFT, padx=5, pady=3)
-
-        # 放松按钮
-        self.relax_btn = Button(
-            gripper_inner,
-            text="放松(R)",
-            command=self._gripper_relax,
-            width=8,
-            height=2,
-            font=("微软雅黑", 12, "bold"),
-            bg="#95a5a6",
-            fg="white",
-            activebackground="#7f8c8d",
-            activeforeground="white",
-            relief=RAISED,
-            bd=3,
-            state=DISABLED
-        )
-        self.relax_btn.pack(side=LEFT, padx=5, pady=3)
-
-        # 状态提示
-        self.gripper_status = StringVar(value="状态: 请先连接")
-        Label(
-            gripper_frame,
-            textvariable=self.gripper_status,
-            font=("微软雅黑", 12),
-            bg="#f5f5f5",
-            fg="#7f8c8d"
-        ).pack(pady=(5, 0))
-
-        # ============== 日志区 ==============
-        log_frame = LabelFrame(
-            self.root,
-            text="通信日志",
-            font=("微软雅黑", 11),
-            padx=10,
-            pady=5,
-            bg="#f5f5f5"
-        )
-        log_frame.pack(fill=BOTH, expand=True, padx=20, pady=(10, 20))
-
-        self.log_text = Text(log_frame, height=6, width=45, state=DISABLED, font=("Consolas", 9))
-        self.log_text.pack(fill=BOTH, expand=True, pady=5)
-
-        scrollbar = Scrollbar(self.log_text)
-        scrollbar.pack(side=RIGHT, fill=Y)
-        self.log_text.config(yscrollcommand=scrollbar.set)
-        scrollbar.config(command=self.log_text.yview)
+        Scrollbar(log_frame, orient=VERTICAL,
+                 command=self.log_text.yview).pack(side=RIGHT, fill=Y)
+        self.log_text.config(yscrollcommand=lambda f, v: f.yview_moveto(v))
 
     def _refresh_ports(self):
-        """刷新串口列表"""
         ports = list(serial.tools.list_ports.comports())
-        port_list = [p.device for p in ports]
-        self.port_combo['values'] = port_list
-        if port_list:
+        self.port_combo['values'] = [p.device for p in ports]
+        if ports:
             self.port_combo.current(0)
 
-    def _set_buttons_state(self, state):
-        """设置按钮状态"""
-        self.open_btn.config(state=state)
-        self.close_btn.config(state=state)
-        self.handshake_btn.config(state=state)
-        self.pinch_btn.config(state=state)
-        self.grip_btn.config(state=state)
-        self.point_btn.config(state=state)
-        self.relax_btn.config(state=state)
-        self.auto_btn.config(state=state)
-        self.manual_btn.config(state=state)
+    def _set_btns_state(self, state):
+        """设置动作按钮状态（不改变模式切换按钮）"""
+        for btn in self.action_btns:
+            btn.config(state=state)
 
     def _update_mode_display(self):
-        """更新模式显示"""
         if self.is_auto_mode:
-            self.mode_indicator.config(text="当前: 自动模式", fg="#3498db")
-            self.mode_var.set("自动")
-            # 自动模式下禁用手动控制按钮
-            self._set_buttons_state(DISABLED)
-            self.gripper_status.set("状态: 自动跟随距离")
+            self.mode_label.config(text="模式: 自动", fg=COLORS["neon_green"])
+            self.auto_btn.config(bg=COLORS["neon_green"], fg="white")
+            self.manual_btn.config(bg=COLORS["shadow"], fg=COLORS["neon"])
+            self._set_btns_state(DISABLED)
+            self.status_label.config(text="状态: 自动跟随距离")
         else:
-            self.mode_indicator.config(text="当前: 手动模式", fg="#9b59b6")
-            # 手动模式下启用所有控制按钮
-            self._set_buttons_state(NORMAL)
-            self.gripper_status.set("状态: 手动控制")
+            self.mode_label.config(text="模式: 手动", fg=COLORS["neon_orange"])
+            self.auto_btn.config(bg=COLORS["shadow"], fg=COLORS["neon"])
+            self.manual_btn.config(bg=COLORS["neon_orange"], fg="white")
+            self._set_btns_state(NORMAL)
+            self.status_label.config(text="状态: 手动控制")
 
     def _connect(self):
-        """连接串口"""
-        port = self.port_var.get()
+        port = self.port_combo.get()
         if not port:
             messagebox.showwarning("警告", "请选择串口")
             return
-
         try:
             self.serial_port = serial.Serial(port, 9600, timeout=0.5)
             self.is_connected = True
             self.is_receiving = True
-            self.status_label.config(text="已连接", fg="#27ae60")
-
-            # 启用所有按钮
-            self._set_buttons_state(NORMAL)
-
-            # 默认自动模式
+            self.status_led.config(fg=COLORS["neon_green"])
+            self.conn_label.config(text="已连接", fg=COLORS["neon_green"])
             self.is_auto_mode = True
             self._update_mode_display()
-
             self.receive_thread = threading.Thread(target=self._receive_data, daemon=True)
             self.receive_thread.start()
-
             self._update_loop()
             self._log(f"连接成功: {port}")
-            self.gripper_status.set("状态: 就绪")
         except Exception as e:
             messagebox.showerror("错误", f"连接失败: {e}")
 
     def _disconnect(self):
-        """断开连接"""
         self.is_receiving = False
         if self.serial_port and self.serial_port.is_open:
             self.serial_port.close()
         self.is_connected = False
-        self.status_label.config(text="未连接", fg="#e74c3c")
-        self.gripper_status.set("状态: 请先连接")
-        self.mode_var.set("未知")
-        self.distance_var.set("-- mm")
-        self.mode_indicator.config(text="当前: 未连接", fg="#7f8c8d")
-
-        # 禁用所有按钮
-        self._set_buttons_state(DISABLED)
+        self.status_led.config(fg=COLORS["danger"])
+        self.conn_label.config(text="未连接", fg=COLORS["danger"])
+        self.mode_label.config(text="模式: 未知", fg=COLORS["text_dim"])
+        self.gauge.set_value(0)
+        self.tilt.set_angle(0)
+        self._set_btns_state(DISABLED)
+        self.status_label.config(text="状态: 请先连接")
         self._log("连接已断开")
 
     def _receive_data(self):
-        """接收数据线程"""
         buffer = ""
-
         while self.is_receiving and self.serial_port and self.serial_port.is_open:
             try:
                 if self.serial_port.in_waiting > 0:
                     data = self.serial_port.read(self.serial_port.in_waiting).decode('utf-8', errors='ignore')
                     buffer += data
-
-                    # 处理完整行
                     while '\n' in buffer:
                         line, buffer = buffer.split('\n', 1)
                         line = line.strip()
@@ -500,68 +444,39 @@ class UhandControlGUI:
                 self._log(f"接收错误: {e}")
                 break
 
-    def _parse_line(self, line: str):
-        """解析数据行"""
-        # DIST:xxx - 距离数据
+    def _parse_line(self, line):
         if line.startswith("DIST:"):
             try:
                 self.distance = int(line[5:])
             except ValueError:
                 pass
-        # MODE:1-9 - 模式数据
+        elif line.startswith("ANGLE:"):
+            try:
+                self.angle = int(line[6:])
+            except ValueError:
+                pass
         elif line.startswith("MODE:"):
             mode_num = line[5:].strip()
-            mode_map = {
-                "1": "张开", "2": "闭合", "3": "自动",
-                "4": "握手", "5": "捏取", "6": "全握",
-                "7": "指向", "8": "放松", "9": "手动"
-            }
-            self.mode = mode_map.get(mode_num, "未知")
-            # 只有MODE:3才表示自动模式
             self.is_auto_mode = (mode_num == "3")
-        # CMD:xxx - 命令确认
-        elif line.startswith("CMD:"):
-            cmd_raw = line[4:].strip()
-            cmd_map = {
-                "OPEN": "张开", "CLOSE": "闭合", "AUTO": "自动", "AUTO\r": "自动",
-                "MANUAL": "手动", "MANUAL\r": "手动", "HANDSHAKE": "握手", "PINCH": "捏取",
-                "GRIP": "全握", "POINT": "指向", "RELAX": "放松", "QUERY": "查询"
-            }
-            cmd = cmd_map.get(cmd_raw, cmd_raw)
-            self.mode = cmd
-            # 只有CMD:AUTO才表示自动模式
-            self.is_auto_mode = (cmd == "自动")
 
     def _update_loop(self):
-        """定时更新界面数据"""
         if not self.is_connected:
             return
-
-        # 更新距离显示
-        if self.distance > 0:
-            self.distance_var.set(f"{self.distance} mm")
-        else:
-            self.distance_var.set("-- mm")
-
-        # 更新模式显示
+        self.gauge.set_value(self.distance)
+        self.tilt.set_angle(self.angle)
         self._update_mode_display()
-
-        # 发送查询命令获取距离
         if self.serial_port and self.serial_port.is_open:
             try:
                 self.serial_port.write(b'?')
             except:
                 pass
-
         if self.is_connected:
             self.root.after(200, self._update_loop)
 
     def _set_auto_mode(self):
-        """切换到自动模式"""
         if not self.is_connected:
             messagebox.showwarning("警告", "请先连接串口")
             return
-
         try:
             self.serial_port.write(b'A')
             self.is_auto_mode = True
@@ -571,120 +486,35 @@ class UhandControlGUI:
             messagebox.showerror("错误", f"发送失败: {e}")
 
     def _set_manual_mode(self):
-        """切换到手动模式"""
         if not self.is_connected:
             messagebox.showwarning("警告", "请先连接串口")
             return
-
         try:
-            self.serial_port.write(b'M')  # M = Manual，手动模式，初始化为张开
+            self.serial_port.write(b'M')
             self.is_auto_mode = False
             self._update_mode_display()
             self._log("切换到手动模式")
         except Exception as e:
             messagebox.showerror("错误", f"发送失败: {e}")
 
-    def _gripper_open(self):
-        """张开手掌"""
+    def _send_action(self, cmd, name):
         if not self.is_connected:
-            messagebox.showwarning("警告", "请先连接串口")
             return
-
         try:
-            self.serial_port.write(b'O')
-            self.gripper_status.set("状态: 张开")
-            self._log("发送命令: 张开")
+            self.serial_port.write(cmd.encode())
+            self.status_label.config(text=f"状态: {name}")
+            self._log(f"发送: {name}")
         except Exception as e:
             messagebox.showerror("错误", f"发送失败: {e}")
 
-    def _gripper_close(self):
-        """闭合手掌"""
-        if not self.is_connected:
-            messagebox.showwarning("警告", "请先连接串口")
-            return
-
-        try:
-            self.serial_port.write(b'C')
-            self.gripper_status.set("状态: 闭合")
-            self._log("发送命令: 闭合")
-        except Exception as e:
-            messagebox.showerror("错误", f"发送失败: {e}")
-
-    def _gripper_handshake(self):
-        """握手模式"""
-        if not self.is_connected:
-            messagebox.showwarning("警告", "请先连接串口")
-            return
-
-        try:
-            self.serial_port.write(b'H')
-            self.gripper_status.set("状态: 握手")
-            self._log("发送命令: 握手")
-        except Exception as e:
-            messagebox.showerror("错误", f"发送失败: {e}")
-
-    def _gripper_pinch(self):
-        """捏取模式"""
-        if not self.is_connected:
-            messagebox.showwarning("警告", "请先连接串口")
-            return
-
-        try:
-            self.serial_port.write(b'P')
-            self.gripper_status.set("状态: 捏取")
-            self._log("发送命令: 捏取")
-        except Exception as e:
-            messagebox.showerror("错误", f"发送失败: {e}")
-
-    def _gripper_grip(self):
-        """全握模式"""
-        if not self.is_connected:
-            messagebox.showwarning("警告", "请先连接串口")
-            return
-
-        try:
-            self.serial_port.write(b'G')
-            self.gripper_status.set("状态: 全握")
-            self._log("发送命令: 全握")
-        except Exception as e:
-            messagebox.showerror("错误", f"发送失败: {e}")
-
-    def _gripper_point(self):
-        """指向模式"""
-        if not self.is_connected:
-            messagebox.showwarning("警告", "请先连接串口")
-            return
-
-        try:
-            self.serial_port.write(b'F')
-            self.gripper_status.set("状态: 指向")
-            self._log("发送命令: 指向")
-        except Exception as e:
-            messagebox.showerror("错误", f"发送失败: {e}")
-
-    def _gripper_relax(self):
-        """放松模式"""
-        if not self.is_connected:
-            messagebox.showwarning("警告", "请先连接串口")
-            return
-
-        try:
-            self.serial_port.write(b'R')
-            self.gripper_status.set("状态: 放松")
-            self._log("发送命令: 放松")
-        except Exception as e:
-            messagebox.showerror("错误", f"发送失败: {e}")
-
-    def _log(self, message: str):
-        """添加日志"""
+    def _log(self, msg):
         self.log_text.config(state=NORMAL)
-        timestamp = time.strftime("%H:%M:%S")
-        self.log_text.insert(END, f"[{timestamp}] {message}\n")
+        ts = time.strftime("%H:%M:%S")
+        self.log_text.insert(END, f"[{ts}] {msg}\n")
         self.log_text.see(END)
         self.log_text.config(state=DISABLED)
 
     def run(self):
-        """运行界面"""
         self.root.mainloop()
 
 
