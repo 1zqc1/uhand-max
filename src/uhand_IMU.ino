@@ -4,8 +4,13 @@
  */
 #include <FastLED.h>
 #include <Servo.h>
+#include <SoftwareSerial.h>
 #include <Wire.h>
 #include <avr/wdt.h>
+
+// ================= 软串口定义 =================
+// D10=RXD, D12=TXD
+SoftwareSerial mySerial(10, 12);
 
 // ================= 引脚定义 =================
 const uint8_t SERVO_PINS[6] = {7, 6, 5, 4, 3, 2};  // 拇指、食指、中指、无名指、小指、云台
@@ -212,83 +217,84 @@ static void auto_mode(void) {
 
 // ================= 命令处理 =================
 static void handle_cmd(char cmd) {
-    Serial.print("CMD:");
+    mySerial.print("CMD:");
     switch (cmd) {
         case 'O':
             mode = CMD_OPEN;
             finger_set(THUMB_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN);
-            Serial.println("OPEN");
+            mySerial.println("OPEN");
             break;
         case 'C':
             mode = CMD_CLOSE;
             finger_set(THUMB_CLOSE, FINGER_CLOSE, FINGER_CLOSE, FINGER_CLOSE, FINGER_CLOSE);
-            Serial.println("CLOSE");
+            mySerial.println("CLOSE");
             break;
         case 'A':
             mode = CMD_AUTO;
-            Serial.println("AUTO");
+            mySerial.println("AUTO");
             break;
         case 'M':
             mode = CMD_OPEN;
             finger_set(THUMB_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN);
-            Serial.println("MANUAL");
+            mySerial.println("MANUAL");
             break;
         case 'H':
             mode = CMD_HANDSHAKE;
             finger_set(90, 120, 150, 160, 170);
-            Serial.println("HANDSHAKE");
+            mySerial.println("HANDSHAKE");
             break;
         case 'P':
             mode = CMD_PINCH;
             finger_set(30, 30, 180, 180, 180);
-            Serial.println("PINCH");
+            mySerial.println("PINCH");
             break;
         case 'G':
             mode = CMD_GRIP;
             finger_set(THUMB_CLOSE, FINGER_CLOSE, FINGER_CLOSE, FINGER_CLOSE, FINGER_CLOSE);
-            Serial.println("GRIP");
+            mySerial.println("GRIP");
             break;
         case 'F':
             mode = CMD_POINT;
             finger_set(120, 180, 60, 60, 60);
-            Serial.println("POINT");
+            mySerial.println("POINT");
             break;
         case 'R':
             mode = CMD_RELAX_SEQ;
             relax_open = true;
             t_relax = millis();
             finger_set(THUMB_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN, FINGER_OPEN);
-            Serial.println("RELAX");
+            mySerial.println("RELAX");
             break;
         case '?':
-            Serial.println("QUERY");
-            Serial.print("DIST:"); Serial.println(distance);
-            Serial.print("ANGLE:"); Serial.println((int)angleY);
+            mySerial.println("QUERY");
+            mySerial.print("DIST:"); mySerial.println(distance);
+            mySerial.print("ANGLE:"); mySerial.println((int)angleY);
             return;
         default:
-            Serial.println("UNKNOWN");
+            mySerial.println("UNKNOWN");
             return;
     }
-    Serial.print("MODE:"); Serial.println(mode);
+    mySerial.print("MODE:"); mySerial.println(mode);
 }
 
 // ================= 初始化 =================
 void setup() {
     wdt_enable(WDTO_8S);
-    Serial.begin(9600);
-    Serial.println("=== START ===");
+    mySerial.begin(9600);
+    mySerial.listen();
+    mySerial.println("=== START ===");
 
     // 初始化舵机
     for (uint8_t i = 0; i < 6; i++) {
         servos[i].attach(SERVO_PINS[i], 500, 2500);
     }
-    Serial.println("Servos OK");
+    mySerial.println("Servos OK");
 
     // RGB LED
     FastLED.addLeds<WS2812, RGB_LED, GRB>(&led, 1);
     led = CRGB(0, 100, 0);
     FastLED.show();
-    Serial.println("RGB OK");
+    mySerial.println("RGB OK");
 
     pinMode(BUZZER, OUTPUT);
     Wire.begin();
@@ -298,9 +304,9 @@ void setup() {
     Wire.write(0x6B);  // PWR_MGMT_1
     Wire.write(0x00);  // 唤醒MPU6050
     if (Wire.endTransmission() == 0) {
-        Serial.println("MPU6050 OK");
+        mySerial.println("MPU6050 OK");
     } else {
-        Serial.println("MPU6050 FAIL");
+        mySerial.println("MPU6050 FAIL");
     }
 
     // 上电：张开状态
@@ -308,15 +314,15 @@ void setup() {
     for (uint8_t i = 0; i < 5; i++) finger_current[i] = THUMB_OPEN;
     servos[5].write(90);
 
-    Serial.println("=== READY ===");
-    Serial.println("Commands: O/C/A/M/H/P/G/F/R/?");
+    mySerial.println("=== READY ===");
+    mySerial.println("Commands: O/C/A/M/H/P/G/F/R/?");
 }
 
 // ================= 主循环 =================
 void loop() {
     wdt_reset();
 
-    if (Serial.available()) handle_cmd(Serial.read());
+    if (mySerial.available()) handle_cmd(mySerial.read());
 
     // 自动模式：超声波控制手指
     if (mode == CMD_AUTO) {
@@ -347,6 +353,6 @@ void loop() {
     static uint32_t t_hb = 0;
     if (millis() - t_hb >= 5000) {
         t_hb = millis();
-        Serial.print("HB:"); Serial.println(t_hb / 1000);
+        mySerial.print("HB:"); mySerial.println(t_hb / 1000);
     }
 }
