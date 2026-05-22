@@ -232,24 +232,24 @@ class UhandControlGUI:
         """构建 Apple 风格界面"""
 
         # ============== 顶部导航栏 ==============
-        navbar = Frame(self.root, bg="#FFFFFFEE", height=44)
+        navbar = Frame(self.root, bg="white", height=44)
         navbar.pack(fill=X)
         navbar.pack_propagate(False)
 
         # 标题
         Label(navbar, text="uHand",
               font=("", 17, "bold"),
-              fg=COLORS["text"], bg="#FFFFFFEE").pack(side=LEFT, padx=20, pady=8)
+              fg=COLORS["text"], bg="white").pack(side=LEFT, padx=20, pady=8)
 
         # 连接状态指示
         self.conn_dot = Label(navbar, text="●",
                              font=("", 10),
-                             fg=COLORS["danger"], bg="#FFFFFFEE")
+                             fg=COLORS["danger"], bg="white")
         self.conn_dot.pack(side=RIGHT, padx=(0, 16))
 
         self.conn_text = Label(navbar, text="未连接",
                               font=("", 11),
-                              fg=COLORS["text_secondary"], bg="#FFFFFFEE")
+                              fg=COLORS["text_secondary"], bg="white")
         self.conn_text.pack(side=RIGHT, padx=4)
 
         # ============== 主内容区 ==============
