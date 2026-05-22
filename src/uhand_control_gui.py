@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-机械手控制界面 - 黄金比例配色 + 卡片式布局
+机械手控制界面 - Apple 风格设计
 """
 
 import serial
@@ -13,28 +13,82 @@ from tkinter import *
 from tkinter import ttk, messagebox
 
 
-# ================= 黄金比例配色方案 =================
-# 主色调 60% | 辅助色 30% | 点缀色 10%
+# ================= Apple 风格配色 =================
 COLORS = {
-    "bg_main": "#1a1a2e",       # 主色调 - 深蓝
-    "bg_card": "#242442",       # 卡片背景
-    "accent": "#0066cc",        # 辅助色 - 蓝色
-    "accent_light": "#3a8ad6",  # 浅辅助色
-    "neon": "#00d9ff",         # 点缀色 - 霓虹蓝
-    "neon_green": "#00ff88",   # 点缀色 - 霓虹绿
-    "neon_orange": "#ff8800",   # 点缀色 - 橙色
-    "text": "#e0e0e0",         # 文字色
-    "text_dim": "#8899aa",     # 次要文字
-    "shadow": "#0a0a1e",       # 阴影色（非纯黑）
-    "danger": "#cc3355",        # 危险色
+    "bg":            "#F2F2F7",   # 系统背景
+    "card":          "#FFFFFF",   # 卡片背景
+    "accent":        "#007AFF",   # Apple Blue
+    "accent_hover":  "#0062CC",   # 深蓝
+    "text":          "#1C1C1E",   # 主文字
+    "text_secondary":"#8E8E93",   # 次要文字
+    "separator":     "#E5E5EA",   # 分割线
+    "success":       "#34C759",   # 绿色
+    "danger":        "#FF3B30",   # 红色
+    "warning":       "#FF9500",   # 橙色
+    "purple":        "#AF52DE",   # 紫色
+    "teal":          "#5AC8FA",   # 青色
 }
 
 
+# ================= 圆角卡片容器 =================
+class Card(Frame):
+    """Apple 风格卡片"""
+
+    def __init__(self, parent, padding=16, **kwargs):
+        super().__init__(parent, bg=COLORS["card"], bd=0,
+                        highlightthickness=0, **kwargs)
+
+        # 内边距
+        self.inner = Frame(self, bg=COLORS["card"])
+        self.inner.pack(fill=BOTH, expand=True, padx=padding, pady=padding)
+
+        # 圆角 + 阴影用 after 延迟绘制
+        self.after(10, self._apply_style)
+
+    def _apply_style(self):
+        pass  # Tkinter 原生不支持圆角，保持简洁
+
+
+# ================= 分段控制器 =================
+class SegmentedControl(Frame):
+    """iOS 风格分段控制器"""
+
+    def __init__(self, parent, items, command=None, **kwargs):
+        super().__init__(parent, bg=COLORS["separator"], **kwargs)
+        self.command = command
+        self.buttons = []
+        self.selected = 0
+
+        for i, text in enumerate(items):
+            btn = Button(self, text=text, font=("", 11),
+                         fg=COLORS["text"], bg=COLORS["separator"],
+                         activebackground=COLORS["card"],
+                         activeforeground=COLORS["text"],
+                         relief=FLAT, bd=0, padx=16, pady=6,
+                         cursor="hand2",
+                         command=lambda idx=i: self._select(idx))
+            btn.pack(side=LEFT)
+            self.buttons.append(btn)
+
+        self._select(0)
+
+    def _select(self, idx):
+        self.selected = idx
+        for i, btn in enumerate(self.buttons):
+            if i == idx:
+                btn.config(bg=COLORS["card"], fg=COLORS["accent"])
+            else:
+                btn.config(bg=COLORS["separator"], fg=COLORS["text_secondary"])
+        if self.command:
+            self.command(idx)
+
+
+# ================= 环形仪表盘 =================
 class GaugeCard(Canvas):
-    """仪表盘卡片"""
+    """Apple Watch 风格仪表盘"""
 
     def __init__(self, parent, title, unit="mm", **kwargs):
-        super().__init__(parent, **kwargs)
+        super().__init__(parent, bg=COLORS["card"], highlightthickness=0, **kwargs)
         self.title = title
         self.unit = unit
         self.value = 0
@@ -50,48 +104,45 @@ class GaugeCard(Canvas):
         if w < 40 or h < 40:
             return
 
-        cx, cy, r = w / 2, h / 2 - 10, min(w, h) / 2 - 25
+        cx, cy, r = w / 2, h / 2 - 14, min(w, h) / 2 - 26
 
-        # 背景圆弧
+        # 灰色背景环
         self.create_arc(cx - r, cy - r, cx + r, cy + r,
                         start=135, extent=270, style=ARC,
-                        outline=COLORS["shadow"], width=14)
+                        outline="#E5E5EA", width=10, capstyle=ROUND)
 
-        # 数值圆弧
+        # 彩色进度环
         ratio = self.value / self.max_value
         ext = int(ratio * 270)
         if ext > 0:
             if self.value < 80:
-                color = COLORS["neon_green"]
+                color = COLORS["success"]
             elif self.value < 200:
-                color = COLORS["neon"]
+                color = COLORS["accent"]
             else:
-                color = COLORS["neon_orange"]
+                color = COLORS["warning"]
             self.create_arc(cx - r, cy - r, cx + r, cy + r,
                             start=135, extent=ext, style=ARC,
-                            outline=color, width=12)
+                            outline=color, width=10, capstyle=ROUND)
 
-        # 中心数值
-        self.create_text(cx, cy - 8, text=f"{self.value}",
-                        fill=COLORS["neon"], font=("Arial", 22, "bold"))
-        self.create_text(cx, cy + 18, text=self.unit,
-                        fill=COLORS["text_dim"], font=("Arial", 9))
+        # 中心大数字
+        self.create_text(cx, cy - 6, text=f"{self.value}",
+                        fill=COLORS["text"], font=("", 28, "bold"))
+        # 单位
+        self.create_text(cx, cy + 22, text=self.unit,
+                        fill=COLORS["text_secondary"], font=("", 10))
 
-        # 刻度
-        for i in range(5):
-            angle = math.radians(135 + i * 67.5)
-            x1 = cx + (r - 18) * math.cos(angle)
-            y1 = cy + (r - 18) * math.sin(angle)
-            x2 = cx + (r - 6) * math.cos(angle)
-            y2 = cy + (r - 6) * math.sin(angle)
-            self.create_line(x1, y1, x2, y2, fill=COLORS["accent"], width=2)
+        # 标题
+        self.create_text(cx, cy - r + 10, text=self.title,
+                        fill=COLORS["text_secondary"], font=("", 9))
 
 
+# ================= 云台倾斜指示 =================
 class TiltCard(Canvas):
-    """云台倾斜卡片"""
+    """Apple 风格云台指示器"""
 
     def __init__(self, parent, **kwargs):
-        super().__init__(parent, **kwargs)
+        super().__init__(parent, bg=COLORS["card"], highlightthickness=0, **kwargs)
         self.angle = 0
 
     def set_angle(self, val):
@@ -104,82 +155,48 @@ class TiltCard(Canvas):
         if w < 40 or h < 40:
             return
 
-        cx, cy, r = w / 2, h / 2 - 10, min(w, h) / 2 - 25
+        cx, cy, r = w / 2, h / 2 - 12, min(w, h) / 2 - 26
 
-        # 背景圆
+        # 背景
         self.create_oval(cx - r, cy - r, cx + r, cy + r,
-                        outline=COLORS["shadow"], width=4)
-
+                        outline="#E5E5EA", width=2)
         # 中心点
-        self.create_oval(cx - 5, cy - 5, cx + 5, cy + 5,
-                        fill=COLORS["accent"])
+        self.create_oval(cx - 4, cy - 4, cx + 4, cy + 4, fill=COLORS["accent"])
+
+        # 水平参考线
+        self.create_line(cx - r - 5, cy, cx + r + 5, cy,
+                        fill="#E5E5EA", width=1, dash=(4, 4))
 
         # 指针
         rad = math.radians(90 - self.angle * 2)
-        px = cx + (r - 20) * math.cos(rad)
-        py = cy - (r - 20) * math.sin(rad)
+        px = cx + (r - 18) * math.cos(rad)
+        py = cy - (r - 18) * math.sin(rad)
 
-        color = COLORS["neon_green"] if abs(self.angle) < 10 else COLORS["neon_orange"]
-        self.create_line(cx, cy, px, py, fill=color, width=3)
-        self.create_oval(px - 7, py - 7, px + 7, py + 7, fill=color)
+        color = COLORS["success"] if abs(self.angle) < 10 else COLORS["warning"]
+        self.create_line(cx, cy, px, py, fill=color, width=3, capstyle=ROUND)
+        self.create_oval(px - 6, py - 6, px + 6, py + 6, fill=color)
 
         # 角度值
-        self.create_text(cx, cy + r + 15, text=f"{self.angle:.1f}°",
-                        fill=COLORS["neon"], font=("Arial", 12, "bold"))
+        self.create_text(cx, cy + r + 18, text=f"{self.angle:.1f}°",
+                        fill=COLORS["text"], font=("", 14, "bold"))
+        self.create_text(cx, cy - r + 10, text="云台角度",
+                        fill=COLORS["text_secondary"], font=("", 9))
 
 
-class CollapsibleSection(Frame):
-    """可折叠区域"""
-
-    def __init__(self, parent, title, default_open=False, **kwargs):
-        super().__init__(parent, bg=COLORS["bg_card"], **kwargs)
-
-        self.title = title
-        self.is_open = default_open
-
-        # 标题栏（可点击）
-        self.header = Frame(self, bg=COLORS["accent"])
-        self.header.pack(fill=X)
-
-        self.header_label = Label(self.header,
-                                 text=f"{'▼' if default_open else '▶'} {title}",
-                                 font=("微软雅黑", 11, "bold"),
-                                 fg="white", bg=COLORS["accent"], anchor=W,
-                                 cursor="hand2")
-        self.header_label.pack(side=LEFT, padx=15, pady=8)
-        self.header_label.bind("<Button-1>", self._on_header_click)
-
-        # 内容区
-        self.content = Frame(self, bg=COLORS["bg_card"])
-        if default_open:
-            self.content.pack(fill=X, padx=10, pady=(0, 10))
-
-    def _on_header_click(self, _event=None):
-        """处理标题栏点击"""
-        self.is_open = not self.is_open
-        if self.is_open:
-            self.content.pack(fill=X, padx=10, pady=(0, 10))
-            self.header_label.config(text=f"▼ {self.title}")
-        else:
-            self.content.pack_forget()
-            self.header_label.config(text=f"▶ {self.title}")
-
-    def toggle(self):
-        """手动切换（兼容外部调用）"""
-        self._on_header_click()
-
-    def get_content(self):
-        return self.content
-
-
+# ================= 主界面 =================
 class UhandControlGUI:
     """机械手控制界面"""
 
     def __init__(self):
         self.root = Tk()
-        self.root.title("uHand 智能机械手")
-        self.root.geometry("800x650")
-        self.root.configure(bg=COLORS["bg_main"])
+        self.root.title("uHand")
+        self.root.geometry("780x640")
+        self.root.configure(bg=COLORS["bg"])
+        self.root.minsize(720, 580)
+
+        # 全局圆角风格按钮
+        self.root.option_add("*Button.relief", "flat")
+        self.root.option_add("*Button.borderWidth", 0)
 
         self.serial_port = None
         self.is_connected = False
@@ -192,182 +209,229 @@ class UhandControlGUI:
 
         self._setup_ui()
 
+    def _make_pill_btn(self, parent, text, command, color=COLORS["accent"],
+                       fg="white", width=None, height=1, font_size=10, state=NORMAL):
+        """创建 Apple 风格圆角按钮"""
+        btn = Button(parent, text=text, command=command,
+                     font=("", font_size),
+                     bg=color, fg=fg,
+                     activebackground=COLORS["accent_hover"] if color == COLORS["accent"]
+                         else "#d0d0d6",
+                     activeforeground=fg,
+                     relief=FLAT, bd=0,
+                     padx=20, pady=8,
+                     state=state, cursor="hand2",
+                     disabledforeground=COLORS["text_secondary"])
+        if width:
+            btn.config(width=width)
+        if height > 1:
+            btn.config(pady=8 * height)
+        return btn
+
     def _setup_ui(self):
-        """构建界面"""
+        """构建 Apple 风格界面"""
 
-        # ============== 标题栏 ==============
-        header = Frame(self.root, bg=COLORS["accent"], height=45)
-        header.pack(fill=X)
-        header.pack_propagate(False)
+        # ============== 顶部导航栏 ==============
+        navbar = Frame(self.root, bg="#FFFFFFEE", height=44)
+        navbar.pack(fill=X)
+        navbar.pack_propagate(False)
 
-        Label(header, text="uHand 智能机械手控制中心",
-              font=("微软雅黑", 16, "bold"), fg="white",
-              bg=COLORS["accent"]).pack(side=LEFT, padx=20, pady=8)
+        # 标题
+        Label(navbar, text="uHand",
+              font=("", 17, "bold"),
+              fg=COLORS["text"], bg="#FFFFFFEE").pack(side=LEFT, padx=20, pady=8)
 
-        self.status_led = Label(header, text="●", font=("Arial", 16),
-                              fg=COLORS["danger"], bg=COLORS["accent"])
-        self.status_led.pack(side=RIGHT, padx=20)
+        # 连接状态指示
+        self.conn_dot = Label(navbar, text="●",
+                             font=("", 10),
+                             fg=COLORS["danger"], bg="#FFFFFFEE")
+        self.conn_dot.pack(side=RIGHT, padx=(0, 16))
+
+        self.conn_text = Label(navbar, text="未连接",
+                              font=("", 11),
+                              fg=COLORS["text_secondary"], bg="#FFFFFFEE")
+        self.conn_text.pack(side=RIGHT, padx=4)
 
         # ============== 主内容区 ==============
-        main = Frame(self.root, bg=COLORS["bg_main"])
-        main.pack(fill=BOTH, expand=True, padx=20, pady=15)
+        main = Frame(self.root, bg=COLORS["bg"])
+        main.pack(fill=BOTH, expand=True, padx=20, pady=(16, 20))
 
-        # -------- 第一行：仪表盘（60%宽度）--------
-        gauge_row = Frame(main, bg=COLORS["bg_main"])
-        gauge_row.pack(fill=X, pady=(0, 15))
+        # -------- 仪表盘卡片 --------
+        gauge_card = Card(main, padding=20)
+        gauge_card.pack(fill=X, pady=(0, 16))
 
-        # 超声波仪表
-        gauge_card = Frame(gauge_row, bg=COLORS["bg_card"], bd=0)
-        gauge_card.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 10))
+        gauges = Frame(gauge_card.inner, bg=COLORS["card"])
+        gauges.pack(fill=X)
 
-        Label(gauge_card, text="超声波距离",
-              font=("微软雅黑", 11, "bold"),
-              fg=COLORS["neon"], bg=COLORS["bg_card"]).pack(pady=(12, 5))
+        # 左侧：超声波仪表
+        left_gauge = Frame(gauges, bg=COLORS["card"])
+        left_gauge.pack(side=LEFT, fill=BOTH, expand=True)
 
-        self.gauge = GaugeCard(gauge_card, "超声波", unit="mm",
-                              width=220, height=170, bg=COLORS["bg_card"])
-        self.gauge.pack(pady=5)
+        self.gauge = GaugeCard(left_gauge, "超声波距离", unit="mm",
+                              width=200, height=160)
+        self.gauge.pack()
 
-        # 云台仪表
-        tilt_card = Frame(gauge_row, bg=COLORS["bg_card"], bd=0)
-        tilt_card.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 10))
+        # 右侧：云台仪表
+        right_gauge = Frame(gauges, bg=COLORS["card"])
+        right_gauge.pack(side=LEFT, fill=BOTH, expand=True)
 
-        Label(tilt_card, text="云台角度",
-              font=("微软雅黑", 11, "bold"),
-              fg=COLORS["neon"], bg=COLORS["bg_card"]).pack(pady=(12, 5))
+        self.tilt = TiltCard(right_gauge, width=200, height=160)
+        self.tilt.pack()
 
-        self.tilt = TiltCard(tilt_card, width=200, height=170, bg=COLORS["bg_card"])
-        self.tilt.pack(pady=5)
+        # 中间：状态信息
+        mid_gauge = Frame(gauges, bg=COLORS["card"])
+        mid_gauge.pack(side=LEFT, fill=BOTH, expand=True)
 
-        # 状态卡片
-        status_card = Frame(gauge_row, bg=COLORS["bg_card"], bd=0)
-        status_card.pack(side=LEFT, fill=Y, padx=(0, 10))
+        Label(mid_gauge, text="机械手状态",
+              font=("", 10, "bold"),
+              fg=COLORS["text"], bg=COLORS["card"]).pack(anchor=W, pady=(0, 12))
 
-        Label(status_card, text="连接状态",
-              font=("微软雅黑", 11, "bold"),
-              fg=COLORS["neon"], bg=COLORS["bg_card"]).pack(pady=(12, 5))
+        # 模式指示
+        mode_frame = Frame(mid_gauge, bg=COLORS["card"])
+        mode_frame.pack(fill=X, pady=4)
 
-        status_inner = Frame(status_card, bg=COLORS["bg_card"])
-        status_inner.pack(padx=15, pady=5)
+        Label(mode_frame, text="模式",
+              font=("", 10), fg=COLORS["text_secondary"],
+              bg=COLORS["card"]).pack(side=LEFT)
 
-        self.conn_label = Label(status_inner, text="未连接",
-                              font=("微软雅黑", 12, "bold"),
-                              fg=COLORS["danger"], bg=COLORS["bg_card"],
-                              anchor=W, width=12)
-        self.conn_label.pack(pady=3)
+        self.mode_label = Label(mode_frame, text="自动",
+              font=("", 10, "bold"), fg=COLORS["success"],
+              bg=COLORS["card"])
+        self.mode_label.pack(side=RIGHT)
 
-        self.mode_label = Label(status_inner, text="模式: 自动",
-                              font=("微软雅黑", 11),
-                              fg=COLORS["text_dim"], bg=COLORS["bg_card"],
-                              anchor=W, width=12)
-        self.mode_label.pack(pady=3)
+        Separator(mid_gauge, orient=HORIZONTAL, bg=COLORS["separator"], height=1).pack(fill=X, pady=10)
 
-        self.status_label = Label(status_inner, text="状态: 就绪",
-                              font=("微软雅黑", 10),
-                              fg=COLORS["text_dim"], bg=COLORS["bg_card"],
-                              anchor=W, width=12)
-        self.status_label.pack(pady=3)
+        # 距离数值
+        dist_frame = Frame(mid_gauge, bg=COLORS["card"])
+        dist_frame.pack(fill=X, pady=4)
 
-        # 连接控制
-        conn_ctrl = Frame(status_card, bg=COLORS["bg_card"])
-        conn_ctrl.pack(pady=10, padx=15)
+        Label(dist_frame, text="距离",
+              font=("", 10), fg=COLORS["text_secondary"],
+              bg=COLORS["card"]).pack(side=LEFT)
 
-        self.port_combo = ttk.Combobox(conn_ctrl, width=10, state="readonly")
-        self.port_combo.pack(side=LEFT, padx=(0, 5))
+        self.dist_value = Label(dist_frame, text="——",
+              font=("", 20, "bold"), fg=COLORS["text"],
+              bg=COLORS["card"])
+        self.dist_value.pack(side=RIGHT)
+
+        Separator(mid_gauge, orient=HORIZONTAL, bg=COLORS["separator"], height=1).pack(fill=X, pady=10)
+
+        # 角度数值
+        angle_frame = Frame(mid_gauge, bg=COLORS["card"])
+        angle_frame.pack(fill=X, pady=4)
+
+        Label(angle_frame, text="云台角度",
+              font=("", 10), fg=COLORS["text_secondary"],
+              bg=COLORS["card"]).pack(side=LEFT)
+
+        self.angle_value = Label(angle_frame, text="——",
+              font=("", 20, "bold"), fg=COLORS["text"],
+              bg=COLORS["card"])
+        self.angle_value.pack(side=RIGHT)
+
+        Separator(mid_gauge, orient=HORIZONTAL, bg=COLORS["separator"], height=1).pack(fill=X, pady=10)
+
+        # 状态信息
+        status_row = Frame(mid_gauge, bg=COLORS["card"])
+        status_row.pack(fill=X, pady=4)
+
+        Label(status_row, text="状态",
+              font=("", 10), fg=COLORS["text_secondary"],
+              bg=COLORS["card"]).pack(side=LEFT)
+
+        self.status_label = Label(status_row, text="就绪",
+              font=("", 10, "bold"), fg=COLORS["text_secondary"],
+              bg=COLORS["card"])
+        self.status_label.pack(side=RIGHT)
+
+        # -------- 串口卡片 --------
+        port_card = Card(main, padding=14)
+        port_card.pack(fill=X, pady=(0, 16))
+
+        port_row = Frame(port_card.inner, bg=COLORS["card"])
+        port_row.pack(fill=X)
+
+        Label(port_row, text="串口",
+              font=("", 10), fg=COLORS["text_secondary"],
+              bg=COLORS["card"]).pack(side=LEFT, padx=(0, 8))
+
+        self.port_combo = ttk.Combobox(port_row, width=16, state="readonly",
+                                       font=("", 10))
+        self.port_combo.pack(side=LEFT, padx=(0, 8))
         self._refresh_ports()
 
-        Button(conn_ctrl, text="连接", command=self._connect,
-               width=5, bg="#006633", fg="white",
-               relief=FLAT, cursor="hand2").pack(side=LEFT, padx=2)
-        Button(conn_ctrl, text="断开", command=self._disconnect,
-               width=5, bg="#660033", fg="white",
-               relief=FLAT, cursor="hand2").pack(side=LEFT, padx=2)
-        Button(conn_ctrl, text="刷新", command=self._refresh_ports,
-               width=5, bg="#333355", fg="white",
-               relief=FLAT, cursor="hand2").pack(side=LEFT, padx=2)
+        self._make_pill_btn(port_row, "连接", self._connect,
+                          COLORS["accent"], width=6).pack(side=LEFT, padx=4)
+        self._make_pill_btn(port_row, "断开", self._disconnect,
+                          COLORS["danger"], width=6).pack(side=LEFT, padx=4)
 
-        # -------- 第二行：控制面板（下拉菜单）--------
-        control_card = Frame(main, bg=COLORS["bg_card"], bd=0)
-        control_card.pack(fill=X)
+        # -------- 控制卡片 --------
+        control_card = Card(main, padding=20)
+        control_card.pack(fill=X, pady=(0, 16))
 
-        Label(control_card, text="控制面板",
-              font=("微软雅黑", 11, "bold"),
-              fg=COLORS["neon"], bg=COLORS["bg_card"]).pack(anchor=W, padx=15, pady=(12, 5))
+        Label(control_card.inner, text="控制模式",
+              font=("", 12, "bold"),
+              fg=COLORS["text"], bg=COLORS["card"]).pack(anchor=W, pady=(0, 12))
 
-        # 模式切换区域（默认展开）
-        mode_section = CollapsibleSection(control_card, "模式切换", default_open=True)
-        mode_section.pack(fill=X, padx=15, pady=(0, 10))
-        mode_content = mode_section.get_content()
+        mode_row = Frame(control_card.inner, bg=COLORS["card"])
+        mode_row.pack(fill=X, pady=(0, 14))
 
-        mode_inner = Frame(mode_content, bg=COLORS["bg_card"])
-        mode_inner.pack(pady=5)
+        self.auto_btn = self._make_pill_btn(mode_row, "自动模式",
+                                           self._set_auto_mode,
+                                           COLORS["accent"], font_size=11,
+                                           width=14)
+        self.auto_btn.pack(side=LEFT, padx=(0, 10))
 
-        btn_style = {
-            "font": ("微软雅黑", 11, "bold"),
-            "width": 12, "height": 2,
-            "relief": RAISED, "bd": 2,
-            "cursor": "hand2"
-        }
+        self.manual_btn = self._make_pill_btn(mode_row, "手动模式",
+                                             self._set_manual_mode,
+                                             "#E5E5EA", fg=COLORS["text"],
+                                             font_size=11, width=14)
+        self.manual_btn.pack(side=LEFT)
 
-        self.auto_btn = Button(mode_inner, text="自动模式",
-                             bg=COLORS["accent"], fg="white",
-                             activebackground=COLORS["accent_light"], **btn_style,
-                             command=self._set_auto_mode)
-        self.auto_btn.pack(side=LEFT, padx=5)
+        # 动作按钮 - 圆角
+        Separator(control_card.inner, orient=HORIZONTAL,
+                  bg=COLORS["separator"], height=1).pack(fill=X, pady=(0, 14))
 
-        self.manual_btn = Button(mode_inner, text="手动模式",
-                              bg=COLORS["shadow"], fg=COLORS["neon"],
-                              activebackground=COLORS["accent"], **btn_style,
-                              command=self._set_manual_mode)
-        self.manual_btn.pack(side=LEFT, padx=5)
-
-        # 快速动作区域（默认展开便于测试）
-        action_section = CollapsibleSection(control_card, "快速动作", default_open=True)
-        action_section.pack(fill=X, padx=15, pady=(0, 10))
-        action_content = action_section.get_content()
-
-        action_inner = Frame(action_content, bg=COLORS["bg_card"])
-        action_inner.pack(pady=5)
+        Label(control_card.inner, text="手动控制",
+              font=("", 10), fg=COLORS["text_secondary"],
+              bg=COLORS["card"]).pack(anchor=W, pady=(0, 8))
 
         actions = [
-            ("张开", "O", "#00aa55"),
-            ("闭合", "C", "#cc3355"),
-            ("握手", "H", "#0066aa"),
-            ("捏取", "P", "#6600aa"),
-            ("全握", "G", "#aa6600"),
-            ("指向", "F", "#008866"),
-            ("放松", "R", "#666666"),
+            ("张开", "O", COLORS["accent"]),
+            ("闭合", "C", COLORS["danger"]),
+            ("握手", "H", COLORS["success"]),
+            ("捏取", "P", COLORS["purple"]),
+            ("全握", "G", COLORS["warning"]),
+            ("指向", "F", COLORS["teal"]),
+            ("放松", "R", COLORS["text_secondary"]),
         ]
 
+        action_row = Frame(control_card.inner, bg=COLORS["card"])
+        action_row.pack(fill=X)
+
         self.action_btns = []
-        for i, (text, cmd, color) in enumerate(actions):
-            btn = Button(action_inner, text=f"{text}",
-                       command=lambda c=cmd, t=text: self._send_action(c, t),
-                       width=8, height=1, font=("微软雅黑", 9),
-                       bg=color, fg="white", relief=RAISED, bd=2,
-                       state=DISABLED, cursor="hand2")
-            btn.grid(row=0, column=i, padx=3, pady=3)
+        for text, cmd, color in actions:
+            btn = self._make_pill_btn(action_row, text,
+                                    lambda c=cmd, t=text: self._send_action(c, t),
+                                    color, font_size=10, state=DISABLED, width=8)
+            btn.pack(side=LEFT, padx=3)
             self.action_btns.append(btn)
 
-        # -------- 日志区 --------
-        log_card = Frame(main, bg=COLORS["bg_card"], bd=0)
-        log_card.pack(fill=BOTH, expand=True, pady=(15, 0))
+        # -------- 日志卡片 --------
+        log_card = Card(main, padding=12)
+        log_card.pack(fill=BOTH, expand=True)
 
-        Label(log_card, text="通信日志",
-              font=("微软雅黑", 10, "bold"),
-              fg=COLORS["text_dim"], bg=COLORS["bg_card"]).pack(anchor=W, padx=15, pady=(10, 5))
+        Label(log_card.inner, text="日志",
+              font=("", 10, "bold"),
+              fg=COLORS["text_secondary"], bg=COLORS["card"]).pack(anchor=W, pady=(0, 6))
 
-        log_frame = Frame(log_card, bg="#0a0a1e")
-        log_frame.pack(fill=BOTH, expand=True, padx=15, pady=(0, 10))
-
-        self.log_text = Text(log_frame, height=4, bg="#0a0a1e",
-                           fg=COLORS["neon_green"], font=("Consolas", 9),
-                           relief=FLAT, bd=0)
+        self.log_text = Text(log_card.inner, height=3,
+                           bg="#F9F9FB", fg=COLORS["text"],
+                           font=("Menlo", 9), relief=FLAT, bd=0,
+                           wrap=WORD, state=DISABLED)
         self.log_text.pack(fill=BOTH, expand=True)
 
-        Scrollbar(log_frame, orient=VERTICAL,
-                 command=self.log_text.yview).pack(side=RIGHT, fill=Y)
-        self.log_text.config(yscrollcommand=lambda f, v: f.yview_moveto(v))
+    # ================= 业务逻辑（保持不变） =================
 
     def _refresh_ports(self):
         ports = list(serial.tools.list_ports.comports())
@@ -376,23 +440,24 @@ class UhandControlGUI:
             self.port_combo.current(0)
 
     def _set_btns_state(self, state):
-        """设置动作按钮状态（不改变模式切换按钮）"""
         for btn in self.action_btns:
-            btn.config(state=state)
+            bg = btn.cget("bg") if state != DISABLED else "#E5E5EA"
+            fg = "white" if state != DISABLED else COLORS["text_secondary"]
+            btn.config(state=state, bg=bg, fg=fg)
 
     def _update_mode_display(self):
         if self.is_auto_mode:
-            self.mode_label.config(text="模式: 自动", fg=COLORS["neon_green"])
-            self.auto_btn.config(bg=COLORS["neon_green"], fg="white")
-            self.manual_btn.config(bg=COLORS["shadow"], fg=COLORS["neon"])
+            self.mode_label.config(text="自动", fg=COLORS["success"])
+            self.auto_btn.config(bg=COLORS["accent"], fg="white")
+            self.manual_btn.config(bg="#E5E5EA", fg=COLORS["text"])
             self._set_btns_state(DISABLED)
-            self.status_label.config(text="状态: 自动跟随距离")
+            self.status_label.config(text="自动跟随距离", fg=COLORS["text_secondary"])
         else:
-            self.mode_label.config(text="模式: 手动", fg=COLORS["neon_orange"])
-            self.auto_btn.config(bg=COLORS["shadow"], fg=COLORS["neon"])
-            self.manual_btn.config(bg=COLORS["neon_orange"], fg="white")
+            self.mode_label.config(text="手动", fg=COLORS["warning"])
+            self.auto_btn.config(bg="#E5E5EA", fg=COLORS["text"])
+            self.manual_btn.config(bg=COLORS["warning"], fg="white")
             self._set_btns_state(NORMAL)
-            self.status_label.config(text="状态: 手动控制")
+            self.status_label.config(text="手动控制", fg=COLORS["text_secondary"])
 
     def _connect(self):
         port = self.port_combo.get()
@@ -403,8 +468,8 @@ class UhandControlGUI:
             self.serial_port = serial.Serial(port, 9600, timeout=0.5)
             self.is_connected = True
             self.is_receiving = True
-            self.status_led.config(fg=COLORS["neon_green"])
-            self.conn_label.config(text="已连接", fg=COLORS["neon_green"])
+            self.conn_dot.config(fg=COLORS["success"])
+            self.conn_text.config(text="已连接", fg=COLORS["success"])
             self.is_auto_mode = True
             self._update_mode_display()
             self.receive_thread = threading.Thread(target=self._receive_data, daemon=True)
@@ -419,13 +484,15 @@ class UhandControlGUI:
         if self.serial_port and self.serial_port.is_open:
             self.serial_port.close()
         self.is_connected = False
-        self.status_led.config(fg=COLORS["danger"])
-        self.conn_label.config(text="未连接", fg=COLORS["danger"])
-        self.mode_label.config(text="模式: 未知", fg=COLORS["text_dim"])
+        self.conn_dot.config(fg=COLORS["danger"])
+        self.conn_text.config(text="未连接", fg=COLORS["text_secondary"])
+        self.mode_label.config(text="——", fg=COLORS["text_secondary"])
+        self.dist_value.config(text="——")
+        self.angle_value.config(text="——")
         self.gauge.set_value(0)
         self.tilt.set_angle(0)
         self._set_btns_state(DISABLED)
-        self.status_label.config(text="状态: 请先连接")
+        self.status_label.config(text="请先连接", fg=COLORS["text_secondary"])
         self._log("连接已断开")
 
     def _receive_data(self):
@@ -448,11 +515,13 @@ class UhandControlGUI:
         if line.startswith("DIST:"):
             try:
                 self.distance = int(line[5:])
+                self.dist_value.config(text=f"{self.distance} mm")
             except ValueError:
                 pass
         elif line.startswith("ANGLE:"):
             try:
                 self.angle = int(line[6:])
+                self.angle_value.config(text=f"{self.angle}°")
             except ValueError:
                 pass
         elif line.startswith("MODE:"):
@@ -502,7 +571,7 @@ class UhandControlGUI:
             return
         try:
             self.serial_port.write(cmd.encode())
-            self.status_label.config(text=f"状态: {name}")
+            self.status_label.config(text=name, fg=COLORS["text_secondary"])
             self._log(f"发送: {name}")
         except Exception as e:
             messagebox.showerror("错误", f"发送失败: {e}")
@@ -510,12 +579,22 @@ class UhandControlGUI:
     def _log(self, msg):
         self.log_text.config(state=NORMAL)
         ts = time.strftime("%H:%M:%S")
-        self.log_text.insert(END, f"[{ts}] {msg}\n")
+        self.log_text.insert(END, f"{ts}  {msg}\n")
         self.log_text.see(END)
         self.log_text.config(state=DISABLED)
 
     def run(self):
         self.root.mainloop()
+
+
+class Separator(Frame):
+    """分割线"""
+    def __init__(self, parent, orient=HORIZONTAL, bg=COLORS["separator"],
+                 height=1, **kwargs):
+        if orient == HORIZONTAL:
+            super().__init__(parent, bg=bg, height=height, **kwargs)
+        else:
+            super().__init__(parent, bg=bg, width=height, **kwargs)
 
 
 if __name__ == "__main__":
